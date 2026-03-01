@@ -15,12 +15,26 @@ console.error("Current working directory:", process.cwd())
 // Microsoft Graph API endpoints
 const MS_GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 const USER_AGENT = "microsoft-todo-mcp-server/1.0"
+const LOG_PREVIEW_LIMIT = 4000
 
 // Create server instance
 const server = new McpServer({
   name: "mstodo",
   version: "1.0.0",
 })
+
+type GraphRequestErrorInfo = {
+  url: string
+  method: string
+  status?: number
+  responseBody?: string
+  requestBody?: string
+  requestId?: string
+  clientRequestId?: string
+  message: string
+}
+
+let lastGraphRequestError: GraphRequestErrorInfo | null = null
 
 // Helper function for making Microsoft Graph API requests
 async function makeGraphRequest<T>(url: string, token: string, method = "GET", body?: any): Promise<T | null> {
@@ -30,15 +44,18 @@ async function makeGraphRequest<T>(url: string, token: string, method = "GET", b
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
   }
+  const serializedBody = body && (method === "POST" || method === "PATCH") ? JSON.stringify(body) : undefined
 
   try {
+    lastGraphRequestError = null
+
     const options: RequestInit = {
       method,
       headers,
     }
 
-    if (body && (method === "POST" || method === "PATCH")) {
-      options.body = JSON.stringify(body)
+    if (serializedBody) {
+      options.body = serializedBody
     }
 
     console.error(`Making request to: ${url}`)
@@ -49,6 +66,7 @@ async function makeGraphRequest<T>(url: string, token: string, method = "GET", b
           ...headers,
           Authorization: "Bearer [REDACTED]",
         },
+        body: serializedBody ? formatBodyForLog(body) : undefined,
       })}`,
     )
 
@@ -67,7 +85,14 @@ async function makeGraphRequest<T>(url: string, token: string, method = "GET", b
 
     if (!response.ok) {
       const errorText = await response.text()
+      lastGraphRequestError = extractGraphErrorInfo(url, method, serializedBody, response.status, errorText)
+
       console.error(`HTTP error! status: ${response.status}, body: ${errorText}`)
+      console.error(`Response headers: ${JSON.stringify(formatHeadersForLog(response.headers))}`)
+      if (serializedBody) {
+        console.error(`Request body: ${formatBodyForLog(body)}`)
+      }
+      console.error(`Request URL: ${url}`)
 
       // Check for the specific MailboxNotEnabledForRESTAPI error
       if (errorText.includes("MailboxNotEnabledForRESTAPI")) {
@@ -106,10 +131,20 @@ but API access is restricted for personal accounts.
     }
 
     const data = JSON.parse(responseText)
-    console.error(`Response received: ${JSON.stringify(data).substring(0, 200)}...`)
+    const responsePreview = formatBodyForLog(data)
+    console.error(`Response headers: ${JSON.stringify(formatHeadersForLog(response.headers))}`)
+    console.error(`Response received: ${responsePreview}`)
     return data as T
   } catch (error) {
     console.error("Error making Graph API request:", error)
+    if (!lastGraphRequestError && error instanceof Error) {
+      lastGraphRequestError = {
+        url,
+        method,
+        requestBody: serializedBody,
+        message: error.message,
+      }
+    }
     return null
   }
 }
@@ -369,6 +404,8 @@ const recurrenceSchema = z.object({
   }),
 })
 
+type RecurrenceInput = z.infer<typeof recurrenceSchema>
+
 const linkedResourceSchema = z.object({
   webUrl: z.string().optional().describe("Deep link to the linked item"),
   applicationName: z.string().optional().describe("Source application name"),
@@ -381,6 +418,89 @@ function buildDateTimeTimeZone(dateTime: string): DateTimeTimeZone {
     dateTime,
     timeZone: "UTC",
   }
+}
+
+function buildRecurrencePayload(recurrence: RecurrenceInput): PatternedRecurrence {
+  const pattern: PatternedRecurrence["pattern"] = {
+    type: recurrence.pattern.type,
+    interval: recurrence.pattern.interval,
+  }
+
+  if (recurrence.pattern.month !== undefined) pattern.month = recurrence.pattern.month
+  if (recurrence.pattern.dayOfMonth !== undefined) pattern.dayOfMonth = recurrence.pattern.dayOfMonth
+  if (recurrence.pattern.daysOfWeek !== undefined) pattern.daysOfWeek = recurrence.pattern.daysOfWeek
+  if (recurrence.pattern.firstDayOfWeek !== undefined) pattern.firstDayOfWeek = recurrence.pattern.firstDayOfWeek
+  if (recurrence.pattern.index !== undefined) pattern.index = recurrence.pattern.index
+
+  const range: PatternedRecurrence["range"] = {
+    type: recurrence.range.type,
+    startDate: recurrence.range.startDate,
+  }
+
+  if (recurrence.range.endDate !== undefined) range.endDate = recurrence.range.endDate
+  if (recurrence.range.numberOfOccurrences !== undefined) range.numberOfOccurrences = recurrence.range.numberOfOccurrences
+  if (recurrence.range.recurrenceTimeZone !== undefined) range.recurrenceTimeZone = recurrence.range.recurrenceTimeZone
+
+  return {
+    pattern,
+    range,
+  }
+}
+
+function formatBodyForLog(body: unknown): string {
+  if (body === undefined) return ""
+
+  try {
+    const serialized = JSON.stringify(body)
+    return serialized.length > LOG_PREVIEW_LIMIT
+      ? `${serialized.slice(0, LOG_PREVIEW_LIMIT)}... [truncated ${serialized.length - LOG_PREVIEW_LIMIT} chars]`
+      : serialized
+  } catch {
+    return "[unserializable body]"
+  }
+}
+
+function formatHeadersForLog(headers: Headers): Record<string, string> {
+  return Object.fromEntries(Array.from(headers.entries()))
+}
+
+function extractGraphErrorInfo(
+  url: string,
+  method: string,
+  requestBody: string | undefined,
+  status: number,
+  responseBody: string,
+): GraphRequestErrorInfo {
+  let requestId: string | undefined
+  let clientRequestId: string | undefined
+
+  try {
+    const parsed = JSON.parse(responseBody)
+    requestId = parsed?.error?.innerError?.["request-id"]
+    clientRequestId = parsed?.error?.innerError?.["client-request-id"]
+  } catch {}
+
+  return {
+    url,
+    method,
+    status,
+    responseBody,
+    requestBody,
+    requestId,
+    clientRequestId,
+    message: `HTTP error! status: ${status}, body: ${responseBody}`,
+  }
+}
+
+function isRecurrencePatchDateError(info: GraphRequestErrorInfo | null): boolean {
+  if (!info) return false
+
+  return (
+    info.method === "PATCH" &&
+    info.status === 400 &&
+    info.responseBody?.includes("recurrence.range.startDate") === true &&
+    info.responseBody?.includes("Microsoft.OData.Edm.Date") === true
+  )
 }
 
 function formatDateTime(value?: DateTimeTimeZone | null): string | null {
@@ -398,6 +518,7 @@ function formatRecurrence(recurrence?: PatternedRecurrence | null): string | nul
   if (!recurrence) return null
 
   const details = [`${recurrence.pattern.type} every ${recurrence.pattern.interval}`]
+  const hasSentinelEndDate = recurrence.range.endDate === "0001-01-01"
 
   if (recurrence.pattern.daysOfWeek?.length) {
     details.push(`on ${recurrence.pattern.daysOfWeek.join(", ")}`)
@@ -411,7 +532,7 @@ function formatRecurrence(recurrence?: PatternedRecurrence | null): string | nul
     details.push(`starting ${recurrence.range.startDate}`)
   }
 
-  if (recurrence.range.endDate) {
+  if (recurrence.range.type !== "noEnd" && recurrence.range.endDate && !hasSentinelEndDate) {
     details.push(`until ${recurrence.range.endDate}`)
   } else if (recurrence.range.numberOfOccurrences) {
     details.push(`for ${recurrence.range.numberOfOccurrences} occurrence(s)`)
@@ -1466,13 +1587,7 @@ server.tool(
       }
 
       if (recurrence) {
-        taskBody.recurrence = {
-          pattern: recurrence.pattern,
-          range: {
-            ...recurrence.range,
-            recurrenceTimeZone: recurrence.range.recurrenceTimeZone || "UTC",
-          },
-        }
+        taskBody.recurrence = buildRecurrencePayload(recurrence)
       }
 
       if (status) {
@@ -1640,13 +1755,7 @@ server.tool(
         if (recurrence === null) {
           taskBody.recurrence = null
         } else {
-          taskBody.recurrence = {
-            pattern: recurrence.pattern,
-            range: {
-              ...recurrence.range,
-              recurrenceTimeZone: recurrence.range.recurrenceTimeZone || "UTC",
-            },
-          }
+          taskBody.recurrence = buildRecurrencePayload(recurrence)
         }
       }
 
@@ -1670,14 +1779,32 @@ server.tool(
         }
       }
 
-      const response = await makeGraphRequest<Task>(
-        `${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}`,
-        token,
-        "PATCH",
-        taskBody,
-      )
+      const response = await makeGraphRequest<Task>(`${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}`, token, "PATCH", taskBody)
 
       if (!response) {
+        if (taskBody.recurrence !== undefined && isRecurrencePatchDateError(lastGraphRequestError)) {
+          const requestIdInfo = lastGraphRequestError?.requestId
+            ? `\nRequest ID: ${lastGraphRequestError.requestId}`
+            : ""
+          const clientRequestIdInfo = lastGraphRequestError?.clientRequestId
+            ? `\nClient Request ID: ${lastGraphRequestError.clientRequestId}`
+            : ""
+
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  "Microsoft Graph rejected the recurrence update even though the MCP server sent a minimal documented recurrence payload. " +
+                  "This appears to be a Graph To Do API limitation or bug affecting PATCH updates to recurrence.range.startDate." +
+                  "\nThe exact request and response bodies were logged to stderr for debugging." +
+                  requestIdInfo +
+                  clientRequestIdInfo,
+              },
+            ],
+          }
+        }
+
         return {
           content: [
             {
