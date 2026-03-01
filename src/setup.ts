@@ -117,6 +117,7 @@ REDIRECT_URI=http://localhost:3000/callback
 }
 
 async function updateClaudeConfig() {
+  const cliPath = join(process.cwd(), "dist", "cli.js")
   const claudeConfigPath =
     process.platform === "win32"
       ? join(process.env.APPDATA || "", "Claude", "claude_desktop_config.json")
@@ -130,8 +131,8 @@ async function updateClaudeConfig() {
       JSON.stringify(
         {
           microsoftTodo: {
-            command: "npx",
-            args: ["--yes", "microsoft-todo-mcp-server"],
+            command: "node",
+            args: [cliPath],
             env: {},
           },
         },
@@ -154,8 +155,8 @@ async function updateClaudeConfig() {
 
     config.mcpServers["microsoftTodo"] = {
       ...existingServerConfig,
-      command: "npx",
-      args: ["--yes", "microsoft-todo-mcp-server"],
+      command: "node",
+      args: [cliPath],
       env: {}, // No need for tokens in env anymore!
     }
 

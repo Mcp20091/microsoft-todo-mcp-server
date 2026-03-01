@@ -31,24 +31,22 @@ function resolveTokenPath(): string {
 // Define paths
 const tokenPath = resolveTokenPath()
 const outputPath = process.argv[3] || path.join(process.cwd(), "mcp.json")
+const cliPath = path.resolve(process.cwd(), "dist", "cli.js")
 
 console.log(`Reading tokens from: ${tokenPath}`)
 console.log(`Writing config to: ${outputPath}`)
+console.log(`Using CLI path: ${cliPath}`)
 
 try {
   // Read the tokens
   const tokenData = JSON.parse(fs.readFileSync(tokenPath, "utf8"))
 
-  // Create the MCP config - only include the actual tokens
+  // Create MCP config for this local fork checkout.
   const mcpConfig = {
     mcpServers: {
       microsoftTodo: {
-        command: "npx",
-        args: ["--yes", "microsoft-todo-mcp-server"],
-        env: {
-          MS_TODO_ACCESS_TOKEN: tokenData.accessToken,
-          MS_TODO_REFRESH_TOKEN: tokenData.refreshToken,
-        },
+        command: "node",
+        args: [cliPath],
       },
     },
   }

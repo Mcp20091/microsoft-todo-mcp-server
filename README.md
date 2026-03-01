@@ -1,7 +1,6 @@
 # Microsoft To Do MCP
 
-[![CI](https://github.com/jordanburke/microsoft-todo-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/jordanburke/microsoft-todo-mcp-server/actions/workflows/ci.yml)
-[![npm version](https://badge.fury.io/js/microsoft-todo-mcp-server.svg)](https://www.npmjs.com/package/microsoft-todo-mcp-server)
+[![CI](https://github.com/Mcp20091/microsoft-todo-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/Mcp20091/microsoft-todo-mcp-server/actions/workflows/ci.yml)
 
 A Model Context Protocol (MCP) server that enables AI assistants like Claude and Cursor to interact with Microsoft To Do via the Microsoft Graph API. This service provides comprehensive task management capabilities through a secure OAuth 2.0 authentication flow.
 
@@ -24,34 +23,16 @@ A Model Context Protocol (MCP) server that enables AI assistants like Claude and
 
 ## Installation
 
-### Option 1: Global Installation
+### Recommended: Clone and Run This Fork Locally
 
 ```bash
-# Install globally using npm
-npm install -g microsoft-todo-mcp-server
-
-# Or using pnpm
-pnpm install -g microsoft-todo-mcp-server
-
-# Or run directly with npx (no installation)
-npx microsoft-todo-mcp-server
-```
-
-The package provides these command aliases:
-
-- `microsoft-todo-mcp-server` - Full package name
-- `mstodo` - Short alias for the MCP server
-- `mstodo-config` - Configuration helper tool
-- `mstodo-setup` - Setup helper
-
-### Option 2: Clone and Run Locally
-
-```bash
-git clone https://github.com/jordanburke/microsoft-todo-mcp-server.git
+git clone https://github.com/Mcp20091/microsoft-todo-mcp-server.git
 cd microsoft-todo-mcp-server
 pnpm install
 pnpm run build
 ```
+
+This fork is documented primarily for local use from your own checkout. The setup helpers generate MCP config that points at your local built `dist/cli.js`.
 
 ## Azure App Registration
 
@@ -136,16 +117,7 @@ export MS_TODO_REFRESH_TOKEN=your_refresh_token
 
 ### Complete Setup Workflow
 
-Choose one of these setup paths.
-
-#### Option A: Installed Globally
-
-```bash
-# Build-free setup for global installs
-mstodo-setup
-```
-
-#### Option B: Running from a Local Clone
+For this fork, the expected workflow is to run from a local clone:
 
 ```bash
 pnpm install
@@ -159,24 +131,16 @@ Authentication opens a browser window and creates a token file. Configuration ge
 #### Step 1: Authenticate with Microsoft
 
 ```bash
-# Local clone
 pnpm run auth
-
-# Global install
-mstodo-setup
 ```
 
 #### Step 2: Create MCP Configuration
 
 ```bash
-# Local clone
 pnpm run create-config
-
-# Global install
-mstodo-config
 ```
 
-This creates an `mcp.json` file with your authentication tokens.
+This creates an `mcp.json` file that points to your local built `dist/cli.js`.
 
 #### Step 3: Configure Your AI Assistant
 
@@ -192,12 +156,8 @@ Add to your configuration file:
 {
   "mcpServers": {
     "microsoftTodo": {
-      "command": "npx",
-      "args": ["--yes", "microsoft-todo-mcp-server"],
-      "env": {
-        "MS_TODO_ACCESS_TOKEN": "your_access_token",
-        "MS_TODO_REFRESH_TOKEN": "your_refresh_token"
-      }
+      "command": "node",
+      "args": ["/ABSOLUTE/PATH/TO/microsoft-todo-mcp-server/dist/cli.js"]
     }
   }
 }
@@ -220,7 +180,6 @@ pnpm run dev          # Build and run CLI in one command
 # Running the Server
 pnpm start            # Run MCP server directly
 pnpm run cli          # Run MCP server via CLI wrapper
-npx microsoft-todo-mcp-server  # Run globally installed version
 
 # Authentication & Configuration
 pnpm run auth         # Start OAuth authentication server
@@ -357,19 +316,28 @@ TENANT_ID=consumers  # Personal only
 ```bash
 # Using the MCP tool
 # In your AI assistant: "Check auth status"
+```
 
-# Or examine tokens directly
-cat tokens.json | jq '.expiresAt'
+**Inspect token storage:**
 
-# Convert timestamp to readable date
-date -d @$(($(cat tokens.json | jq -r '.expiresAt') / 1000))
+Windows PowerShell:
+
+```powershell
+$tokenPath = Join-Path $env:APPDATA 'microsoft-todo-mcp\tokens.json'
+Get-Content $tokenPath
+```
+
+macOS/Linux:
+
+```bash
+cat ~/.config/microsoft-todo-mcp/tokens.json
 ```
 
 **Enable verbose logging:**
 
 ```bash
 # The server logs to stderr for debugging
-mstodo 2> debug.log
+pnpm run cli 2> debug.log
 ```
 
 ## Contributing
@@ -393,5 +361,4 @@ MIT License - See [LICENSE](LICENSE) file for details
 
 ## Support
 
-- [GitHub Issues](https://github.com/jordanburke/microsoft-todo-mcp-server/issues)
-- [npm Package](https://www.npmjs.com/package/microsoft-todo-mcp-server)
+- [GitHub Issues](https://github.com/Mcp20091/microsoft-todo-mcp-server/issues)
