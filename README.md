@@ -278,6 +278,14 @@ The server provides 27 tools for Microsoft To Do management.
 - Rate limits apply according to Microsoft's policies
 - Some features may be unavailable for personal accounts
 - Shared lists have limited functionality
+- Microsoft Graph To Do recurrence updates do not reliably accept documented `PATCH` payloads that include `recurrence.range.startDate`
+- In testing, Microsoft Graph rejected valid-looking payloads in both this MCP server and Graph Explorer with `Invalid JSON, Error converting value "YYYY-MM-DD" to type 'Microsoft.OData.Edm.Date'`
+- `update-task` now uses the Graph-compatible recurrence update shape that worked in testing:
+  - include `dueDateTime`
+  - send the new recurrence `pattern`
+  - send `recurrence.range` as an empty object (`{}`)
+  - clear recurrence with `recurrence: null`
+- If you update recurrence without specifying `dueDateTime`, the server fetches the current task and reuses the existing due date when it is still on or after the current calendar date; otherwise you must provide a new `dueDateTime`
 
 ## Troubleshooting
 
