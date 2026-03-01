@@ -210,7 +210,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: "Not authenticated. Please run 'npx microsoft-todo-mcp-server setup' to authenticate with Microsoft.",
+            text: "Not authenticated. Please run 'npx mstodo-setup' or 'pnpm run setup' to authenticate with Microsoft.",
           },
         ],
       }
@@ -2915,8 +2915,18 @@ server.tool(
 // Main function to start the server
 export async function startServer(config?: ServerConfig): Promise<void> {
   try {
-    // Note: Token management is now handled by the TokenManager class
-    // Config options are kept for backward compatibility but not used
+    if (config?.tokenFilePath) {
+      process.env.MSTODO_TOKEN_FILE = config.tokenFilePath
+      tokenManager.configure({ tokenFilePath: config.tokenFilePath })
+    }
+
+    if (config?.accessToken) {
+      process.env.MS_TODO_ACCESS_TOKEN = config.accessToken
+    }
+
+    if (config?.refreshToken) {
+      process.env.MS_TODO_REFRESH_TOKEN = config.refreshToken
+    }
 
     // Check if using a personal Microsoft account and show warning if needed
     await isPersonalMicrosoftAccount()

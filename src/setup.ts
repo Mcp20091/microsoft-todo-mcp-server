@@ -129,9 +129,9 @@ async function updateClaudeConfig() {
     console.log(
       JSON.stringify(
         {
-          "microsoft-todo": {
+          microsoftTodo: {
             command: "npx",
-            args: ["microsoft-todo-mcp-server"],
+            args: ["--yes", "microsoft-todo-mcp-server"],
             env: {},
           },
         },
@@ -150,10 +150,17 @@ async function updateClaudeConfig() {
       config.mcpServers = {}
     }
 
-    config.mcpServers["microsoft-todo"] = {
+    const existingServerConfig = config.mcpServers["microsoftTodo"] || config.mcpServers["microsoft-todo"] || {}
+
+    config.mcpServers["microsoftTodo"] = {
+      ...existingServerConfig,
       command: "npx",
-      args: ["microsoft-todo-mcp-server"],
+      args: ["--yes", "microsoft-todo-mcp-server"],
       env: {}, // No need for tokens in env anymore!
+    }
+
+    if (config.mcpServers["microsoft-todo"]) {
+      delete config.mcpServers["microsoft-todo"]
     }
 
     writeFileSync(claudeConfigPath, JSON.stringify(config, null, 2))

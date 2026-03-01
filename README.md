@@ -109,7 +109,19 @@ TENANT_ID=00000000-0000-0000-0000-000000000000
 
 ### Token Storage
 
-The server stores authentication tokens in `tokens.json` with automatic refresh 5 minutes before expiration. You can override the token file location:
+The server stores authentication tokens with automatic refresh 5 minutes before expiration.
+
+Default token location:
+- Windows: `%APPDATA%\microsoft-todo-mcp\tokens.json`
+- macOS/Linux: `~/.config/microsoft-todo-mcp/tokens.json`
+
+`pnpm run create-config` resolves tokens in this order:
+1. explicit CLI argument
+2. `MSTODO_TOKEN_FILE`
+3. `./tokens.json` in the current directory, if present
+4. the default per-user config path above
+
+You can override the token file location:
 
 ```bash
 # Using environment variable
@@ -213,7 +225,7 @@ npx microsoft-todo-mcp-server  # Run globally installed version
 # Authentication & Configuration
 pnpm run auth         # Start OAuth authentication server
 pnpm run setup        # Run setup helper
-pnpm run create-config # Generate mcp.json from tokens.json
+pnpm run create-config # Generate mcp.json from the resolved token source
 
 # Code Quality
 pnpm run format       # Format code with Prettier

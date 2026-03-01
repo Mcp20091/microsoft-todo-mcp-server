@@ -62,20 +62,12 @@ const msalConfig: Configuration = {
   system: {
     loggerOptions: {
       loggerCallback(loglevel: LogLevel, message: string, containsPii: boolean) {
-        console.log(`MSAL Log: ${message}`)
+        if (!containsPii && loglevel <= LogLevel.Warning) {
+          console.log(`MSAL Log: ${message}`)
+        }
       },
-      piiLoggingEnabled: true,
-      logLevel: LogLevel.Verbose,
-    },
-  },
-  cache: {
-    cachePlugin: {
-      beforeCacheAccess: async (cacheContext) => {
-        console.log("Cache access requested:", cacheContext)
-      },
-      afterCacheAccess: async (cacheContext) => {
-        console.log("Cache access completed:", cacheContext)
-      },
+      piiLoggingEnabled: false,
+      logLevel: LogLevel.Warning,
     },
   },
 }
@@ -355,37 +347,10 @@ app.get("/callback", async (req: Request, res: Response) => {
   try {
     const response = await cca.acquireTokenByCode(tokenRequest)
 
-    // Log full response structure (without sensitive values)
-    console.log("Token response structure:", {
-      keys: Object.keys(response),
-      hasAccessToken: !!response.accessToken,
-      hasRefreshToken: !!(response as any).refreshToken,
-      hasIdToken: !!response.idToken,
-      tokenType: response.tokenType,
-      expiresIn: (response as any).expiresIn,
-      expiresOn: response.expiresOn,
-      scopes: response.scopes,
-      account: response.account
-        ? {
-            username: response.account.username,
-            tenantId: response.account.tenantId,
-            localAccountId: response.account.localAccountId,
-          }
-        : null,
-    })
-
     // Get refresh token from token cache
     const tokenCache = cca.getTokenCache()
     const serializedCache = await tokenCache.serialize()
     const cacheJson = JSON.parse(serializedCache)
-
-    // Log the full cache structure for debugging (excluding sensitive values)
-    console.log("Full token cache structure keys:", Object.keys(cacheJson))
-    if (cacheJson.RefreshToken) {
-      console.log("RefreshToken keys in cache:", Object.keys(cacheJson.RefreshToken))
-    } else if (cacheJson.RefreshTokens) {
-      console.log("RefreshTokens keys in cache:", Object.keys(cacheJson.RefreshTokens))
-    }
 
     // Try different ways to get the refresh token
     let refreshToken: string | null = null
@@ -394,13 +359,11 @@ app.get("/callback", async (req: Request, res: Response) => {
     if (cacheJson.RefreshTokens && Object.keys(cacheJson.RefreshTokens).length > 0) {
       const refreshTokenKeys = Object.keys(cacheJson.RefreshTokens)
       refreshToken = cacheJson.RefreshTokens[refreshTokenKeys[0]].secret
-      console.log("Refresh token found using RefreshTokens collection")
     }
     // Method 2: Check RefreshToken (singular)
     else if (cacheJson.RefreshToken && Object.keys(cacheJson.RefreshToken).length > 0) {
       const refreshTokenKeys = Object.keys(cacheJson.RefreshToken)
       refreshToken = cacheJson.RefreshToken[refreshTokenKeys[0]].secret
-      console.log("Refresh token found using RefreshToken collection")
     }
     // Method 3: Look for any key with "refresh" in it
     else {
@@ -409,7 +372,6 @@ app.get("/callback", async (req: Request, res: Response) => {
           for (const key in cacheJson[cacheSection]) {
             if (cacheJson[cacheSection][key] && cacheJson[cacheSection][key].secret) {
               refreshToken = cacheJson[cacheSection][key].secret
-              console.log(`Refresh token found in ${cacheSection}.${key}`)
               break
             }
           }
@@ -450,15 +412,6 @@ app.get("/callback", async (req: Request, res: Response) => {
     console.log("Authentication successful! Token saved to:", TOKEN_FILE_PATH)
     console.log("Refresh token obtained:", refreshToken ? "Yes" : "No")
 
-    // Format token display with safety checks
-    const accessTokenDisplay = response.accessToken
-      ? `${response.accessToken.substring(0, 15)}...${response.accessToken.substring(response.accessToken.length - 5)}`
-      : "Not provided"
-
-    const refreshTokenDisplay = refreshToken
-      ? `${refreshToken.substring(0, 10)}...${refreshToken.substring(refreshToken.length - 5)}`
-      : "Not provided"
-
     // Check if the account is a personal account
     const isPersonalAccount =
       response.account &&
@@ -490,7 +443,6 @@ app.get("/callback", async (req: Request, res: Response) => {
           .success { background-color: #d4edda; border: 1px solid #c3e6cb; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
           .warning { background-color: #fff3cd; border: 1px solid #ffeeba; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
           .token-details { background-color: #f8f9fa; padding: 15px; border-radius: 4px; margin-top: 20px; }
-          .debug-info { margin-top: 30px; border-top: 1px solid #dee2e6; padding-top: 20px; }
         </style>
       </head>
       <body>
@@ -503,28 +455,13 @@ app.get("/callback", async (req: Request, res: Response) => {
           ${warningMessage}
           
           <div class="token-details">
-            <h3>Token Details:</h3>
+            <h3>Authentication Details:</h3>
             <ul>
-              <li>Access Token: ${accessTokenDisplay}</li>
-              <li>Refresh Token: ${refreshTokenDisplay}</li>
+              <li>Account: ${response.account?.username || "Unknown"}</li>
               <li>Token Type: ${response.tokenType || "Not provided"}</li>
               <li>Scopes: ${response.scopes ? response.scopes.join(", ") : "Not provided"}</li>
               <li>Expires: ${new Date(expiresAt).toLocaleString()}</li>
             </ul>
-          </div>
-          
-          <div class="debug-info">
-            <h3>Debug Information:</h3>
-            <pre>${JSON.stringify(
-              {
-                hasRefreshToken: !!refreshToken,
-                tokenType: response.tokenType,
-                scopes: response.scopes,
-                cacheHasRefreshTokens: cacheJson.RefreshTokens && Object.keys(cacheJson.RefreshTokens).length > 0,
-              },
-              null,
-              2,
-            )}</pre>
           </div>
         </div>
       </body>

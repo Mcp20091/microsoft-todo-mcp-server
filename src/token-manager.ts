@@ -1,6 +1,6 @@
 // src/token-manager.ts
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs"
-import { join } from "path"
+import { dirname, join } from "path"
 import { homedir } from "os"
 
 interface TokenData {
@@ -15,28 +15,55 @@ interface StoredTokenData extends TokenData {
   tenantId?: string
 }
 
+function getDefaultConfigDir(): string {
+  return process.platform === "win32"
+    ? join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), "microsoft-todo-mcp")
+    : join(homedir(), ".config", "microsoft-todo-mcp")
+}
+
 export class TokenManager {
   private tokenFilePath: string
   private currentTokens: StoredTokenData | null = null
+  private configuredTokenFilePath?: string
 
   constructor() {
-    // Store tokens in a consistent location across platforms
-    const configDir =
-      process.platform === "win32"
-        ? join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), "microsoft-todo-mcp")
-        : join(homedir(), ".config", "microsoft-todo-mcp")
+    this.tokenFilePath = this.resolveTokenFilePath()
+  }
 
-    // Create directory if it doesn't exist
+  private resolveTokenFilePath(): string {
+    const configuredPath = this.configuredTokenFilePath || process.env.MSTODO_TOKEN_FILE
+    if (configuredPath) {
+      return configuredPath
+    }
+
+    const configDir = getDefaultConfigDir()
     if (!existsSync(configDir)) {
       mkdirSync(configDir, { recursive: true })
     }
 
-    this.tokenFilePath = join(configDir, "tokens.json")
+    return join(configDir, "tokens.json")
+  }
+
+  configure(options?: { tokenFilePath?: string }): void {
+    if (options?.tokenFilePath) {
+      this.configuredTokenFilePath = options.tokenFilePath
+    }
+
+    const nextTokenFilePath = this.resolveTokenFilePath()
+    this.tokenFilePath = nextTokenFilePath
+
+    const tokenDir = dirname(nextTokenFilePath)
+    if (!existsSync(tokenDir)) {
+      mkdirSync(tokenDir, { recursive: true })
+    }
+
     console.error(`Token file path: ${this.tokenFilePath}`)
   }
 
   // Try to get tokens from multiple sources
   async getTokens(): Promise<TokenData | null> {
+    this.configure()
+
     // 1. Check environment variables first (for backward compatibility)
     if (process.env.MS_TODO_ACCESS_TOKEN && process.env.MS_TODO_REFRESH_TOKEN) {
       const envTokens: TokenData = {
@@ -182,15 +209,17 @@ export class TokenManager {
 
       const config = JSON.parse(readFileSync(claudeConfigPath, "utf8"))
 
-      // Update the microsoft-todo server config
-      if (config.mcpServers && config.mcpServers["microsoft-todo"]) {
-        config.mcpServers["microsoft-todo"].env = {
-          ...config.mcpServers["microsoft-todo"].env,
-          MS_TODO_ACCESS_TOKEN: tokens.accessToken,
-          MS_TODO_REFRESH_TOKEN: tokens.refreshToken,
+      if (config.mcpServers) {
+        for (const serverName of ["microsoftTodo", "microsoft-todo"]) {
+          if (config.mcpServers[serverName]) {
+            config.mcpServers[serverName].env = {
+              ...config.mcpServers[serverName].env,
+              MS_TODO_ACCESS_TOKEN: tokens.accessToken,
+              MS_TODO_REFRESH_TOKEN: tokens.refreshToken,
+            }
+          }
         }
 
-        // Write back the updated config
         writeFileSync(claudeConfigPath, JSON.stringify(config, null, 2), "utf8")
         console.error("Updated Claude config with new tokens")
       }
@@ -209,7 +238,7 @@ Your Microsoft To Do tokens have expired and could not be refreshed.
 To fix this:
 1. Open a new terminal
 2. Navigate to the microsoft-todo-mcp-server directory
-3. Run: pnpm run auth
+3. Run: pnpm run setup
 4. Complete the authentication in your browser
 5. Restart Claude Desktop to use the new tokens
 

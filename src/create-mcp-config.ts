@@ -2,14 +2,34 @@
 
 import fs from "fs"
 import path from "path"
+import { homedir } from "os"
 import { fileURLToPath } from "url"
 
 // Get the directory path for the current module
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
+function getDefaultConfigTokenPath(): string {
+  const configDir =
+    process.platform === "win32"
+      ? path.join(process.env.APPDATA || path.join(homedir(), "AppData", "Roaming"), "microsoft-todo-mcp")
+      : path.join(homedir(), ".config", "microsoft-todo-mcp")
+
+  return path.join(configDir, "tokens.json")
+}
+
+function resolveTokenPath(): string {
+  if (process.argv[2]) return process.argv[2]
+  if (process.env.MSTODO_TOKEN_FILE) return process.env.MSTODO_TOKEN_FILE
+
+  const localTokenPath = path.join(process.cwd(), "tokens.json")
+  if (fs.existsSync(localTokenPath)) return localTokenPath
+
+  return getDefaultConfigTokenPath()
+}
+
 // Define paths
-const tokenPath = process.argv[2] || path.join(process.cwd(), "tokens.json")
+const tokenPath = resolveTokenPath()
 const outputPath = process.argv[3] || path.join(process.cwd(), "mcp.json")
 
 console.log(`Reading tokens from: ${tokenPath}`)
