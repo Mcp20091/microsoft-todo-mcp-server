@@ -4,6 +4,9 @@
 
 A Model Context Protocol (MCP) server that enables AI assistants like Claude and Cursor to interact with Microsoft To Do via the Microsoft Graph API. This service provides comprehensive task management capabilities through a secure OAuth 2.0 authentication flow.
 
+> Note
+> This fork has been substantially expanded and revised with significant Codex (AI) assistance, including feature additions, bug fixes, diagnostics, and documentation updates.
+
 ## Features
 
 - **29 MCP Tools**: Comprehensive Microsoft To Do management across authentication, lists, tasks, linked resources, attachments, checklist items, delta sync, and utility workflows
@@ -105,11 +108,9 @@ You can override the token file location:
 ```bash
 # Using environment variable
 export MSTODO_TOKEN_FILE=/path/to/custom/tokens.json
-
-# Or pass tokens directly
-export MS_TODO_ACCESS_TOKEN=your_access_token
-export MS_TODO_REFRESH_TOKEN=your_refresh_token
 ```
+
+Direct `MS_TODO_ACCESS_TOKEN` / `MS_TODO_REFRESH_TOKEN` environment variables are only kept for backward compatibility. For this fork, the recommended workflow is to let the server read and refresh credentials from `tokens.json`.
 
 ## Usage
 
@@ -373,6 +374,7 @@ MIT License - See [LICENSE](LICENSE) file for details
 - Fork of [@jhirono/todomcp](https://github.com/jhirono/todomcp)
 - Built on the [Model Context Protocol SDK](https://github.com/modelcontextprotocol/sdk)
 - Uses [Microsoft Graph API](https://developer.microsoft.com/en-us/graph)
+- Large portions of this fork's recent implementation and documentation work were completed with Codex (AI) assistance
 
 ## Support
 
