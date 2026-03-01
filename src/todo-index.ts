@@ -447,6 +447,13 @@ function buildRecurrencePayload(recurrence: RecurrenceInput): PatternedRecurrenc
   }
 }
 
+function buildRecurrencePatchPayload(recurrence: RecurrenceInput): PatternedRecurrence {
+  return {
+    pattern: buildRecurrencePayload(recurrence).pattern,
+    range: {} as PatternedRecurrence["range"],
+  }
+}
+
 function formatBodyForLog(body: unknown): string {
   if (body === undefined) return ""
 
@@ -501,6 +508,20 @@ function isRecurrencePatchDateError(info: GraphRequestErrorInfo | null): boolean
     info.responseBody?.includes("recurrence.range.startDate") === true &&
     info.responseBody?.includes("Microsoft.OData.Edm.Date") === true
   )
+}
+
+function isFutureOrCurrentDateTime(value: DateTimeTimeZone): boolean {
+  if (!value.dateTime) return false
+
+  const dueDateOnly = value.dateTime.slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDateOnly)) return false
+
+  const today = new Date()
+  const todayDateOnly = `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(2, "0")}-${String(
+    today.getUTCDate(),
+  ).padStart(2, "0")}`
+
+  return dueDateOnly >= todayDateOnly
 }
 
 function formatDateTime(value?: DateTimeTimeZone | null): string | null {
@@ -1693,6 +1714,8 @@ server.tool(
         }
       }
 
+      let existingTask: Task | null = null
+
       // Construct the task update body with all provided properties
       const taskBody: any = {}
 
@@ -1755,7 +1778,59 @@ server.tool(
         if (recurrence === null) {
           taskBody.recurrence = null
         } else {
-          taskBody.recurrence = buildRecurrencePayload(recurrence)
+          if (taskBody.dueDateTime === undefined) {
+            existingTask = await makeGraphRequest<Task>(`${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}`, token)
+
+            if (!existingTask) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Failed to load task ${taskId} to determine the due date required for recurrence updates.`,
+                  },
+                ],
+              }
+            }
+
+            if (!existingTask.dueDateTime) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text:
+                      "Microsoft Graph requires dueDateTime when adding or updating recurrence. " +
+                      "This task has no due date, so include dueDateTime in the update request.",
+                  },
+                ],
+              }
+            }
+
+            if (!isFutureOrCurrentDateTime(existingTask.dueDateTime)) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text:
+                      "Microsoft Graph requires dueDateTime when adding or updating recurrence. " +
+                      "This task's existing due date is already in the past, so specify a new dueDateTime in the update request.",
+                  },
+                ],
+              }
+            }
+
+            taskBody.dueDateTime = existingTask.dueDateTime
+          } else if (taskBody.dueDateTime === null) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "Cannot clear dueDateTime while setting recurrence. Microsoft Graph requires dueDateTime for recurrence updates.",
+                },
+              ],
+            }
+          }
+
+          taskBody.recurrence = buildRecurrencePatchPayload(recurrence)
         }
       }
 
