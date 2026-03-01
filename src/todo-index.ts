@@ -77,10 +77,10 @@ async function makeGraphRequest<T>(url: string, token: string, method = "GET", b
 
     let response = await fetch(url, options)
 
-    // If we get a 401, try to refresh the token and retry once
+    // If we get a 401, force a refresh and retry once.
     if (response.status === 401) {
       console.error("Got 401, attempting token refresh...")
-      const newToken = await getAccessToken() // This will trigger refresh
+      const newToken = await getAccessToken(true)
       if (newToken && newToken !== token) {
         // Retry with new token
         headers.Authorization = `Bearer ${newToken}`
@@ -155,12 +155,12 @@ but API access is restricted for personal accounts.
 }
 
 // Authentication helper using delegated flow with token manager
-async function getAccessToken(): Promise<string | null> {
+async function getAccessToken(forceRefresh = false): Promise<string | null> {
   try {
     console.error("getAccessToken called")
 
     // Use the token manager to get tokens (handles all sources and refresh)
-    const tokens = await tokenManager.getTokens()
+    const tokens = await tokenManager.getTokens({ forceRefresh })
 
     if (tokens) {
       console.error(`Successfully retrieved valid token`)
@@ -289,6 +289,64 @@ server.tool(
           },
         ],
       }
+    }
+  },
+)
+
+server.tool(
+  "refresh-auth-token",
+  "Force a Microsoft Graph token refresh using the stored refresh token and report the new expiration time.",
+  {},
+  async () => {
+    const previousTokens = await tokenManager.getTokens()
+
+    if (!previousTokens) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "Not authenticated. Please run 'npx mstodo-setup' or 'pnpm run setup' to authenticate with Microsoft.",
+          },
+        ],
+      }
+    }
+
+    const refreshedTokens = await tokenManager.getTokens({ forceRefresh: true })
+
+    if (!refreshedTokens) {
+      const errorDetails = lastGraphRequestError
+      const requestId = errorDetails?.requestId ? `\nRequest ID: ${errorDetails.requestId}` : ""
+      const clientRequestId = errorDetails?.clientRequestId
+        ? `\nClient Request ID: ${errorDetails.clientRequestId}`
+        : ""
+
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              "Failed to refresh the Microsoft Graph token. Reauthentication may be required." +
+              requestId +
+              clientRequestId +
+              `\nToken file: ${tokenManager.getTokenFilePath()}`,
+          },
+        ],
+      }
+    }
+
+    const refreshedExpiryTime = new Date(refreshedTokens.expiresAt).toLocaleString()
+    const previousExpiryTime = new Date(previousTokens.expiresAt).toLocaleString()
+    const didExpiryChange = refreshedTokens.expiresAt !== previousTokens.expiresAt
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: didExpiryChange
+            ? `Authentication refreshed successfully. Previous expiry: ${previousExpiryTime}. New expiry: ${refreshedExpiryTime}.\nToken file: ${tokenManager.getTokenFilePath()}`
+            : `Authentication is already current. Current expiry: ${refreshedExpiryTime}.\nToken file: ${tokenManager.getTokenFilePath()}`,
+        },
+      ],
     }
   },
 )

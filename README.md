@@ -6,7 +6,7 @@ A Model Context Protocol (MCP) server that enables AI assistants like Claude and
 
 ## Features
 
-- **27 MCP Tools**: Comprehensive Microsoft To Do management across authentication, lists, tasks, linked resources, attachments, checklist items, delta sync, and utility workflows
+- **29 MCP Tools**: Comprehensive Microsoft To Do management across authentication, lists, tasks, linked resources, attachments, checklist items, delta sync, and utility workflows
 - **Seamless Authentication**: Automatic token refresh with zero manual intervention
 - **OAuth 2.0 Authentication**: Secure authentication with automatic token refresh
 - **Microsoft Graph API Integration**: Direct integration with Microsoft's official API
@@ -196,11 +196,12 @@ pnpm run typecheck    # TypeScript type checking
 
 ## MCP Tools
 
-The server provides 28 tools for Microsoft To Do management.
+The server provides 29 tools for Microsoft To Do management.
 
 ### Authentication
 
 - **`auth-status`** - Check authentication status, token expiration, and account type
+- **`refresh-auth-token`** - Force a Microsoft Graph access-token refresh using the stored refresh token and report the updated expiration time
 
 ### Task Lists (Top-level Containers)
 
