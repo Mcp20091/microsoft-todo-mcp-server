@@ -7,7 +7,7 @@ A Model Context Protocol (MCP) server that enables AI assistants like Claude and
 
 ## Features
 
-- **15 MCP Tools**: Complete task management functionality including lists, tasks, checklist items, and organization features
+- **27 MCP Tools**: Comprehensive Microsoft To Do management across authentication, lists, tasks, linked resources, attachments, checklist items, delta sync, and utility workflows
 - **Seamless Authentication**: Automatic token refresh with zero manual intervention
 - **OAuth 2.0 Authentication**: Secure authentication with automatic token refresh
 - **Microsoft Graph API Integration**: Direct integration with Microsoft's official API
@@ -17,7 +17,7 @@ A Model Context Protocol (MCP) server that enables AI assistants like Claude and
 
 ## Prerequisites
 
-- Node.js 16 or higher (tested with Node.js 18.x, 20.x, and 22.x)
+- Node.js 18 or higher (tested with Node.js 18.x, 20.x, and 22.x)
 - pnpm package manager
 - A Microsoft account (personal, work, or school)
 - Azure App Registration (see setup below)
@@ -207,7 +207,7 @@ pnpm run typecheck    # TypeScript type checking
 
 ## MCP Tools
 
-The server provides 13 tools for comprehensive Microsoft To Do management:
+The server provides 27 tools for comprehensive Microsoft To Do management:
 
 ### Authentication
 
@@ -216,6 +216,9 @@ The server provides 13 tools for comprehensive Microsoft To Do management:
 ### Task Lists (Top-level Containers)
 
 - **`get-task-lists`** - Retrieve all task lists with metadata (default, shared, etc.)
+- **`get-task-list`** - Retrieve a single task list by ID
+- **`get-task-lists-delta`** - Track changes to task lists using Microsoft Graph delta queries
+- **`get-task-lists-organized`** - Group lists into a more human-friendly organized view
 - **`create-task-list`** - Create a new task list
 - **`update-task-list`** - Rename an existing task list
 - **`delete-task-list`** - Delete a task list and all its contents
@@ -224,17 +227,37 @@ The server provides 13 tools for comprehensive Microsoft To Do management:
 
 - **`get-tasks`** - Get tasks from a list with filtering, sorting, and pagination
   - Supports OData query parameters: `$filter`, `$select`, `$orderby`, `$top`, `$skip`, `$count`
+- **`get-task`** - Retrieve a single task by ID
+- **`get-tasks-delta`** - Track changes to tasks in a list using Microsoft Graph delta queries
 - **`create-task`** - Create a new task with full property support
-  - Title, description, due date, start date, importance, reminders, status, categories
-- **`update-task`** - Update any task properties
+  - Title, description, due date, start date, completed date, importance, reminders, recurrence, status, categories, linked resources
+- **`update-task`** - Update any task properties, including clearing due dates, reminders, start dates, and recurrence
 - **`delete-task`** - Delete a task and all its checklist items
+
+### Linked Resources
+
+- **`get-linked-resources`** - List linked resources associated with a task
+- **`create-linked-resource`** - Create a linked resource for a task
+
+### Attachments
+
+- **`get-attachments`** - List file attachments for a task
+- **`get-attachment`** - Retrieve a single file attachment
+- **`create-attachment`** - Add a small file attachment to a task
+- **`create-attachment-upload-session`** - Create an upload session for large file attachments
+- **`delete-attachment`** - Remove an attachment from a task
 
 ### Checklist Items (Subtasks)
 
 - **`get-checklist-items`** - Get subtasks for a specific task
 - **`create-checklist-item`** - Add a new subtask to a task
-- **`update-checklist-item`** - Update subtask text or completion status
+- **`update-checklist-item`** - Update subtask text, completion status, and checklist timestamps
 - **`delete-checklist-item`** - Remove a specific subtask
+
+### Utilities
+
+- **`archive-completed-tasks`** - Move completed tasks older than a specified age to another list
+- **`test-graph-api-exploration`** - Explore Microsoft Graph To Do endpoints and response shapes for troubleshooting
 
 ## Architecture
 
