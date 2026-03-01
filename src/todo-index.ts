@@ -94,7 +94,18 @@ but API access is restricted for personal accounts.
       throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`)
     }
 
-    const data = await response.json()
+    if (response.status === 204) {
+      console.error("Response received: 204 No Content")
+      return null
+    }
+
+    const responseText = await response.text()
+    if (!responseText.trim()) {
+      console.error("Response received: empty body")
+      return null
+    }
+
+    const data = JSON.parse(responseText)
     console.error(`Response received: ${JSON.stringify(data).substring(0, 200)}...`)
     return data as T
   } catch (error) {
@@ -250,35 +261,219 @@ interface TaskList {
   wellknownListName?: string // 'none', 'defaultList', 'flaggedEmails', 'unknownFutureValue'
 }
 
+interface DateTimeTimeZone {
+  dateTime: string
+  timeZone: string
+}
+
+interface RecurrencePattern {
+  type: string
+  interval: number
+  month?: number
+  dayOfMonth?: number
+  daysOfWeek?: string[]
+  firstDayOfWeek?: string
+  index?: string
+}
+
+interface RecurrenceRange {
+  type: string
+  startDate: string
+  endDate?: string
+  recurrenceTimeZone?: string
+  numberOfOccurrences?: number
+}
+
+interface PatternedRecurrence {
+  pattern: RecurrencePattern
+  range: RecurrenceRange
+}
+
+interface LinkedResource {
+  id?: string
+  webUrl?: string
+  applicationName?: string
+  displayName?: string
+  externalId?: string
+}
+
+interface TaskFileAttachment {
+  id: string
+  name: string
+  contentType?: string
+  size?: number
+  lastModifiedDateTime?: string
+  contentBytes?: string
+}
+
+interface DeltaResponse<T> {
+  value: T[]
+  "@odata.count"?: number
+  "@odata.nextLink"?: string
+  "@odata.deltaLink"?: string
+}
+
 interface Task {
   id: string
   title: string
   status: string
   importance: string
-  dueDateTime?: {
-    dateTime: string
-    timeZone: string
-  }
-  completedDateTime?: {
-    dateTime: string
-    timeZone: string
-  }
-  reminderDateTime?: {
-    dateTime: string
-    timeZone: string
-  }
+  dueDateTime?: DateTimeTimeZone
+  startDateTime?: DateTimeTimeZone
+  completedDateTime?: DateTimeTimeZone
+  reminderDateTime?: DateTimeTimeZone
+  isReminderOn?: boolean
+  recurrence?: PatternedRecurrence | null
+  hasAttachments?: boolean
+  createdDateTime?: string
+  lastModifiedDateTime?: string
+  bodyLastModifiedDateTime?: string
   body?: {
     content: string
     contentType: string
   }
   categories?: string[]
+  linkedResources?: LinkedResource[]
 }
 
 interface ChecklistItem {
   id: string
   displayName: string
   isChecked: boolean
+  checkedDateTime?: string
   createdDateTime?: string
+}
+
+interface UploadSession {
+  uploadUrl: string
+  expirationDateTime: string
+  nextExpectedRanges: string[]
+}
+
+const recurrenceSchema = z.object({
+  pattern: z.object({
+    type: z.string().describe("Recurrence type such as daily, weekly, absoluteMonthly, relativeMonthly"),
+    interval: z.number().int().min(1).describe("Repeat interval"),
+    month: z.number().int().min(1).max(12).optional(),
+    dayOfMonth: z.number().int().min(1).max(31).optional(),
+    daysOfWeek: z.array(z.string()).optional(),
+    firstDayOfWeek: z.string().optional(),
+    index: z.string().optional(),
+  }),
+  range: z.object({
+    type: z.string().describe("Range type such as noEnd, endDate, or numbered"),
+    startDate: z.string().describe("Start date in YYYY-MM-DD format"),
+    endDate: z.string().optional().describe("End date in YYYY-MM-DD format"),
+    recurrenceTimeZone: z.string().optional(),
+    numberOfOccurrences: z.number().int().min(1).optional(),
+  }),
+})
+
+const linkedResourceSchema = z.object({
+  webUrl: z.string().optional().describe("Deep link to the linked item"),
+  applicationName: z.string().optional().describe("Source application name"),
+  displayName: z.string().optional().describe("Display title for the linked item"),
+  externalId: z.string().optional().describe("External identifier from the source system"),
+})
+
+function buildDateTimeTimeZone(dateTime: string): DateTimeTimeZone {
+  return {
+    dateTime,
+    timeZone: "UTC",
+  }
+}
+
+function formatDateTime(value?: DateTimeTimeZone | null): string | null {
+  if (!value?.dateTime) return null
+
+  const date = new Date(value.dateTime)
+  if (Number.isNaN(date.getTime())) {
+    return `${value.dateTime} (${value.timeZone})`
+  }
+
+  return `${date.toLocaleString()} (${value.timeZone})`
+}
+
+function formatRecurrence(recurrence?: PatternedRecurrence | null): string | null {
+  if (!recurrence) return null
+
+  const details = [`${recurrence.pattern.type} every ${recurrence.pattern.interval}`]
+
+  if (recurrence.pattern.daysOfWeek?.length) {
+    details.push(`on ${recurrence.pattern.daysOfWeek.join(", ")}`)
+  }
+
+  if (recurrence.pattern.dayOfMonth) {
+    details.push(`day ${recurrence.pattern.dayOfMonth}`)
+  }
+
+  if (recurrence.range.startDate) {
+    details.push(`starting ${recurrence.range.startDate}`)
+  }
+
+  if (recurrence.range.endDate) {
+    details.push(`until ${recurrence.range.endDate}`)
+  } else if (recurrence.range.numberOfOccurrences) {
+    details.push(`for ${recurrence.range.numberOfOccurrences} occurrence(s)`)
+  }
+
+  return details.join(", ")
+}
+
+function formatTask(task: Task): string {
+  let taskInfo = `ID: ${task.id}\nTitle: ${task.title}`
+
+  if (task.status) {
+    const status = task.status === "completed" ? "✓" : "○"
+    taskInfo = `${status} ${taskInfo}`
+  }
+
+  const start = formatDateTime(task.startDateTime)
+  const due = formatDateTime(task.dueDateTime)
+  const reminder = formatDateTime(task.reminderDateTime)
+  const completed = formatDateTime(task.completedDateTime)
+  const recurrence = formatRecurrence(task.recurrence)
+
+  if (start) taskInfo += `\nStart: ${start}`
+  if (due) taskInfo += `\nDue: ${due}`
+  if (reminder) taskInfo += `\nReminder: ${reminder}`
+  if (completed) taskInfo += `\nCompleted: ${completed}`
+  if (task.importance) taskInfo += `\nImportance: ${task.importance}`
+  if (task.isReminderOn !== undefined) taskInfo += `\nReminder Enabled: ${task.isReminderOn ? "Yes" : "No"}`
+  if (task.hasAttachments !== undefined) taskInfo += `\nHas Attachments: ${task.hasAttachments ? "Yes" : "No"}`
+  if (recurrence) taskInfo += `\nRecurrence: ${recurrence}`
+  if (task.categories && task.categories.length > 0) taskInfo += `\nCategories: ${task.categories.join(", ")}`
+
+  if (task.linkedResources && task.linkedResources.length > 0) {
+    const linkedSummary = task.linkedResources
+      .map((resource) => resource.displayName || resource.applicationName || resource.webUrl || resource.id || "Linked item")
+      .join(", ")
+    taskInfo += `\nLinked Resources: ${linkedSummary}`
+  }
+
+  if (task.createdDateTime) taskInfo += `\nCreated: ${new Date(task.createdDateTime).toLocaleString()}`
+  if (task.lastModifiedDateTime) taskInfo += `\nLast Modified: ${new Date(task.lastModifiedDateTime).toLocaleString()}`
+  if (task.bodyLastModifiedDateTime) taskInfo += `\nBody Modified: ${new Date(task.bodyLastModifiedDateTime).toLocaleString()}`
+
+  if (task.body && task.body.content && task.body.content.trim() !== "") {
+    const previewLength = 120
+    const contentPreview =
+      task.body.content.length > previewLength ? task.body.content.substring(0, previewLength) + "..." : task.body.content
+    taskInfo += `\nDescription: ${contentPreview}`
+  }
+
+  return `${taskInfo}\n---`
+}
+
+function isTaskFileAttachment(value: unknown): value is TaskFileAttachment {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "name" in value &&
+      typeof (value as { id?: unknown }).id === "string" &&
+      typeof (value as { name?: unknown }).name === "string",
+  )
 }
 
 // Register tools
@@ -359,6 +554,146 @@ server.tool(
           {
             type: "text",
             text: `Error fetching task lists: ${error}`,
+          },
+        ],
+      }
+    }
+  },
+)
+
+server.tool(
+  "get-task-list",
+  "Get a single Microsoft Todo task list by ID.",
+  {
+    listId: z.string().describe("ID of the task list"),
+    select: z.string().optional().describe("Comma-separated list of properties to include"),
+  },
+  async ({ listId, select }) => {
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Failed to authenticate with Microsoft API",
+            },
+          ],
+        }
+      }
+
+      const queryParams = new URLSearchParams()
+      if (select) queryParams.append("$select", select)
+
+      const queryString = queryParams.toString()
+      const url = `${MS_GRAPH_BASE}/me/todo/lists/${listId}${queryString ? "?" + queryString : ""}`
+      const list = await makeGraphRequest<TaskList>(url, token)
+
+      if (!list) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to retrieve task list: ${listId}`,
+            },
+          ],
+        }
+      }
+
+      const metadata = []
+      if (list.wellknownListName && list.wellknownListName !== "none") metadata.push(`Type: ${list.wellknownListName}`)
+      if (list.isShared !== undefined) metadata.push(`Shared: ${list.isShared ? "Yes" : "No"}`)
+      if (list.isOwner !== undefined) metadata.push(`Owner: ${list.isOwner ? "Yes" : "No"}`)
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Task list details:\n\nID: ${list.id}\nName: ${list.displayName}${metadata.length ? `\n${metadata.join("\n")}` : ""}`,
+          },
+        ],
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error fetching task list: ${error}`,
+          },
+        ],
+      }
+    }
+  },
+)
+
+server.tool(
+  "get-task-lists-delta",
+  "Track changes to Microsoft Todo task lists using the Graph delta API.",
+  {
+    deltaUrl: z.string().optional().describe("Full @odata.nextLink or @odata.deltaLink URL from a previous delta response"),
+    deltaToken: z.string().optional().describe("Delta token from a previous delta response"),
+    skipToken: z.string().optional().describe("Skip token from a previous delta response"),
+    select: z.string().optional().describe("Comma-separated list of properties to include on the initial request"),
+    maxPageSize: z.number().int().min(1).optional().describe("Preferred maximum number of lists returned"),
+  },
+  async ({ deltaUrl, deltaToken, skipToken, select, maxPageSize }) => {
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Failed to authenticate with Microsoft API",
+            },
+          ],
+        }
+      }
+
+      let url = deltaUrl || `${MS_GRAPH_BASE}/me/todo/lists/delta`
+      if (!deltaUrl) {
+        const queryParams = new URLSearchParams()
+        if (deltaToken) queryParams.append("$deltatoken", deltaToken)
+        if (skipToken) queryParams.append("$skiptoken", skipToken)
+        if (select) queryParams.append("$select", select)
+        const queryString = queryParams.toString()
+        if (queryString) url += `?${queryString}`
+      }
+
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      }
+      if (maxPageSize) {
+        headers.Prefer = `odata.maxpagesize=${maxPageSize}`
+      }
+
+      const response = await fetch(url, { method: "GET", headers })
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`)
+      }
+
+      const data = (await response.json()) as DeltaResponse<TaskList>
+      const formattedLists = (data.value || []).map((list) => `ID: ${list.id}\nName: ${list.displayName}\n---`).join("\n")
+
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `Task list delta results:\n\n${formattedLists || "No changed lists returned."}` +
+              `${data["@odata.nextLink"] ? `\n\nNext Link:\n${data["@odata.nextLink"]}` : ""}` +
+              `${data["@odata.deltaLink"] ? `\n\nDelta Link:\n${data["@odata.deltaLink"]}` : ""}`,
+          },
+        ],
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error fetching task list delta: ${error}`,
           },
         ],
       }
@@ -876,44 +1211,7 @@ server.tool(
         }
       }
 
-      // Format the tasks based on available properties
-      const formattedTasks = tasks.map((task) => {
-        // Default format
-        let taskInfo = `ID: ${task.id}\nTitle: ${task.title}`
-
-        // Add status if available
-        if (task.status) {
-          const status = task.status === "completed" ? "✓" : "○"
-          taskInfo = `${status} ${taskInfo}`
-        }
-
-        // Add due date if available
-        if (task.dueDateTime) {
-          taskInfo += `\nDue: ${new Date(task.dueDateTime.dateTime).toLocaleDateString()}`
-        }
-
-        // Add importance if available
-        if (task.importance) {
-          taskInfo += `\nImportance: ${task.importance}`
-        }
-
-        // Add categories if available
-        if (task.categories && task.categories.length > 0) {
-          taskInfo += `\nCategories: ${task.categories.join(", ")}`
-        }
-
-        // Add body content if available and not empty
-        if (task.body && task.body.content && task.body.content.trim() !== "") {
-          const previewLength = 50
-          const contentPreview =
-            task.body.content.length > previewLength
-              ? task.body.content.substring(0, previewLength) + "..."
-              : task.body.content
-          taskInfo += `\nDescription: ${contentPreview}`
-        }
-
-        return `${taskInfo}\n---`
-      })
+      const formattedTasks = tasks.map((task) => formatTask(task))
 
       // Add count information if requested and available
       let countInfo = ""
@@ -943,6 +1241,147 @@ server.tool(
 )
 
 server.tool(
+  "get-task",
+  "Get a single Microsoft Todo task by ID.",
+  {
+    listId: z.string().describe("ID of the task list"),
+    taskId: z.string().describe("ID of the task"),
+    select: z.string().optional().describe("Comma-separated list of properties to include"),
+  },
+  async ({ listId, taskId, select }) => {
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Failed to authenticate with Microsoft API",
+            },
+          ],
+        }
+      }
+
+      const queryParams = new URLSearchParams()
+      if (select) queryParams.append("$select", select)
+
+      const queryString = queryParams.toString()
+      const url = `${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}${queryString ? "?" + queryString : ""}`
+      const task = await makeGraphRequest<Task>(url, token)
+
+      if (!task) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to retrieve task: ${taskId}`,
+            },
+          ],
+        }
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Task details:\n\n${formatTask(task)}`,
+          },
+        ],
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error fetching task: ${error}`,
+          },
+        ],
+      }
+    }
+  },
+)
+
+server.tool(
+  "get-tasks-delta",
+  "Track changes to tasks in a Microsoft Todo list using the Graph delta API.",
+  {
+    listId: z.string().describe("ID of the task list"),
+    deltaUrl: z.string().optional().describe("Full @odata.nextLink or @odata.deltaLink URL from a previous delta response"),
+    deltaToken: z.string().optional().describe("Delta token from a previous delta response"),
+    skipToken: z.string().optional().describe("Skip token from a previous delta response"),
+    select: z.string().optional().describe("Comma-separated list of properties to include on the initial request"),
+    top: z.number().int().min(1).optional().describe("Maximum number of tasks to retrieve on the initial request"),
+    expand: z.string().optional().describe("OData $expand expression for the initial request"),
+    maxPageSize: z.number().int().min(1).optional().describe("Preferred maximum number of tasks returned"),
+  },
+  async ({ listId, deltaUrl, deltaToken, skipToken, select, top, expand, maxPageSize }) => {
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Failed to authenticate with Microsoft API",
+            },
+          ],
+        }
+      }
+
+      let url = deltaUrl || `${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/delta`
+      if (!deltaUrl) {
+        const queryParams = new URLSearchParams()
+        if (deltaToken) queryParams.append("$deltatoken", deltaToken)
+        if (skipToken) queryParams.append("$skiptoken", skipToken)
+        if (select) queryParams.append("$select", select)
+        if (top !== undefined) queryParams.append("$top", top.toString())
+        if (expand) queryParams.append("$expand", expand)
+        const queryString = queryParams.toString()
+        if (queryString) url += `?${queryString}`
+      }
+
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      }
+      if (maxPageSize) {
+        headers.Prefer = `odata.maxpagesize=${maxPageSize}`
+      }
+
+      const response = await fetch(url, { method: "GET", headers })
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`)
+      }
+
+      const data = (await response.json()) as DeltaResponse<Task>
+      const formattedTasks = (data.value || []).map((task) => formatTask(task)).join("\n")
+
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `Task delta results for list ${listId}:\n\n${formattedTasks || "No changed tasks returned."}` +
+              `${data["@odata.nextLink"] ? `\n\nNext Link:\n${data["@odata.nextLink"]}` : ""}` +
+              `${data["@odata.deltaLink"] ? `\n\nDelta Link:\n${data["@odata.deltaLink"]}` : ""}`,
+          },
+        ],
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error fetching task delta: ${error}`,
+          },
+        ],
+      }
+    }
+  },
+)
+
+server.tool(
   "create-task",
   "Create a new task in a specific Microsoft Todo list. A task is the main todo item that can have a title, description, due date, and other properties.",
   {
@@ -951,14 +1390,17 @@ server.tool(
     body: z.string().optional().describe("Description or body content of the task"),
     dueDateTime: z.string().optional().describe("Due date in ISO format (e.g., 2023-12-31T23:59:59Z)"),
     startDateTime: z.string().optional().describe("Start date in ISO format (e.g., 2023-12-31T23:59:59Z)"),
+    completedDateTime: z.string().optional().describe("Completion date in ISO format"),
     importance: z.enum(["low", "normal", "high"]).optional().describe("Task importance"),
     isReminderOn: z.boolean().optional().describe("Whether to enable reminder for this task"),
     reminderDateTime: z.string().optional().describe("Reminder date and time in ISO format"),
+    recurrence: recurrenceSchema.optional().describe("Structured recurrence definition"),
     status: z
       .enum(["notStarted", "inProgress", "completed", "waitingOnOthers", "deferred"])
       .optional()
       .describe("Status of the task"),
     categories: z.array(z.string()).optional().describe("Categories associated with the task"),
+    linkedResources: z.array(linkedResourceSchema).optional().describe("Linked resources to create with the task"),
   },
   async ({
     listId,
@@ -966,11 +1408,14 @@ server.tool(
     body,
     dueDateTime,
     startDateTime,
+    completedDateTime,
     importance,
     isReminderOn,
     reminderDateTime,
+    recurrence,
     status,
     categories,
+    linkedResources,
   }) => {
     try {
       const token = await getAccessToken()
@@ -997,17 +1442,15 @@ server.tool(
       }
 
       if (dueDateTime) {
-        taskBody.dueDateTime = {
-          dateTime: dueDateTime,
-          timeZone: "UTC",
-        }
+        taskBody.dueDateTime = buildDateTimeTimeZone(dueDateTime)
       }
 
       if (startDateTime) {
-        taskBody.startDateTime = {
-          dateTime: startDateTime,
-          timeZone: "UTC",
-        }
+        taskBody.startDateTime = buildDateTimeTimeZone(startDateTime)
+      }
+
+      if (completedDateTime) {
+        taskBody.completedDateTime = buildDateTimeTimeZone(completedDateTime)
       }
 
       if (importance) {
@@ -1019,9 +1462,16 @@ server.tool(
       }
 
       if (reminderDateTime) {
-        taskBody.reminderDateTime = {
-          dateTime: reminderDateTime,
-          timeZone: "UTC",
+        taskBody.reminderDateTime = buildDateTimeTimeZone(reminderDateTime)
+      }
+
+      if (recurrence) {
+        taskBody.recurrence = {
+          pattern: recurrence.pattern,
+          range: {
+            ...recurrence.range,
+            recurrenceTimeZone: recurrence.range.recurrenceTimeZone || "UTC",
+          },
         }
       }
 
@@ -1031,6 +1481,10 @@ server.tool(
 
       if (categories && categories.length > 0) {
         taskBody.categories = categories
+      }
+
+      if (linkedResources && linkedResources.length > 0) {
+        taskBody.linkedResources = linkedResources
       }
 
       const response = await makeGraphRequest<Task>(
@@ -1082,9 +1536,14 @@ server.tool(
     body: z.string().optional().describe("New description or body content of the task"),
     dueDateTime: z.string().optional().describe("New due date in ISO format (e.g., 2023-12-31T23:59:59Z)"),
     startDateTime: z.string().optional().describe("New start date in ISO format (e.g., 2023-12-31T23:59:59Z)"),
+    completedDateTime: z
+      .string()
+      .optional()
+      .describe("New completion date in ISO format. Pass an empty string to clear it."),
     importance: z.enum(["low", "normal", "high"]).optional().describe("New task importance"),
     isReminderOn: z.boolean().optional().describe("Whether to enable reminder for this task"),
     reminderDateTime: z.string().optional().describe("New reminder date and time in ISO format"),
+    recurrence: recurrenceSchema.nullable().optional().describe("New recurrence definition. Pass null to clear it."),
     status: z
       .enum(["notStarted", "inProgress", "completed", "waitingOnOthers", "deferred"])
       .optional()
@@ -1098,9 +1557,11 @@ server.tool(
     body,
     dueDateTime,
     startDateTime,
+    completedDateTime,
     importance,
     isReminderOn,
     reminderDateTime,
+    recurrence,
     status,
     categories,
   }) => {
@@ -1137,10 +1598,7 @@ server.tool(
           // Remove the due date by setting it to null
           taskBody.dueDateTime = null
         } else {
-          taskBody.dueDateTime = {
-            dateTime: dueDateTime,
-            timeZone: "UTC",
-          }
+          taskBody.dueDateTime = buildDateTimeTimeZone(dueDateTime)
         }
       }
 
@@ -1149,10 +1607,15 @@ server.tool(
           // Remove the start date by setting it to null
           taskBody.startDateTime = null
         } else {
-          taskBody.startDateTime = {
-            dateTime: startDateTime,
-            timeZone: "UTC",
-          }
+          taskBody.startDateTime = buildDateTimeTimeZone(startDateTime)
+        }
+      }
+
+      if (completedDateTime !== undefined) {
+        if (completedDateTime === "") {
+          taskBody.completedDateTime = null
+        } else {
+          taskBody.completedDateTime = buildDateTimeTimeZone(completedDateTime)
         }
       }
 
@@ -1169,9 +1632,20 @@ server.tool(
           // Remove the reminder date by setting it to null
           taskBody.reminderDateTime = null
         } else {
-          taskBody.reminderDateTime = {
-            dateTime: reminderDateTime,
-            timeZone: "UTC",
+          taskBody.reminderDateTime = buildDateTimeTimeZone(reminderDateTime)
+        }
+      }
+
+      if (recurrence !== undefined) {
+        if (recurrence === null) {
+          taskBody.recurrence = null
+        } else {
+          taskBody.recurrence = {
+            pattern: recurrence.pattern,
+            range: {
+              ...recurrence.range,
+              recurrenceTimeZone: recurrence.range.recurrenceTimeZone || "UTC",
+            },
           }
         }
       }
@@ -1286,6 +1760,500 @@ server.tool(
 )
 
 server.tool(
+  "get-linked-resources",
+  "Get linked resources for a Microsoft Todo task.",
+  {
+    listId: z.string().describe("ID of the task list"),
+    taskId: z.string().describe("ID of the task"),
+  },
+  async ({ listId, taskId }) => {
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Failed to authenticate with Microsoft API",
+            },
+          ],
+        }
+      }
+
+      const response = await makeGraphRequest<{ value: LinkedResource[] }>(
+        `${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}/linkedResources`,
+        token,
+      )
+
+      if (!response) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to retrieve linked resources for task: ${taskId}`,
+            },
+          ],
+        }
+      }
+
+      const linkedResources = response.value || []
+      if (linkedResources.length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `No linked resources found for task: ${taskId}`,
+            },
+          ],
+        }
+      }
+
+      const formattedResources = linkedResources.map((resource) => {
+        const details = [
+          `ID: ${resource.id || "Unknown"}`,
+          `Display Name: ${resource.displayName || "Unknown"}`,
+          `Application: ${resource.applicationName || "Unknown"}`,
+        ]
+
+        if (resource.webUrl) details.push(`URL: ${resource.webUrl}`)
+        if (resource.externalId) details.push(`External ID: ${resource.externalId}`)
+
+        return `${details.join("\n")}\n---`
+      })
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Linked resources for task ${taskId}:\n\n${formattedResources.join("\n")}`,
+          },
+        ],
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error fetching linked resources: ${error}`,
+          },
+        ],
+      }
+    }
+  },
+)
+
+server.tool(
+  "create-linked-resource",
+  "Create a linked resource for a Microsoft Todo task.",
+  {
+    listId: z.string().describe("ID of the task list"),
+    taskId: z.string().describe("ID of the task"),
+    webUrl: z.string().optional().describe("Deep link to the linked item"),
+    applicationName: z.string().optional().describe("Source application name"),
+    displayName: z.string().optional().describe("Display name for the linked item"),
+    externalId: z.string().optional().describe("External identifier from the source system"),
+  },
+  async ({ listId, taskId, webUrl, applicationName, displayName, externalId }) => {
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Failed to authenticate with Microsoft API",
+            },
+          ],
+        }
+      }
+
+      const response = await makeGraphRequest<LinkedResource>(
+        `${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}/linkedResources`,
+        token,
+        "POST",
+        {
+          webUrl,
+          applicationName,
+          displayName,
+          externalId,
+        },
+      )
+
+      if (!response) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to create linked resource for task: ${taskId}`,
+            },
+          ],
+        }
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `Linked resource created successfully!\nID: ${response.id || "Unknown"}` +
+              `${response.displayName ? `\nDisplay Name: ${response.displayName}` : ""}` +
+              `${response.webUrl ? `\nURL: ${response.webUrl}` : ""}`,
+          },
+        ],
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error creating linked resource: ${error}`,
+          },
+        ],
+      }
+    }
+  },
+)
+
+server.tool(
+  "get-attachments",
+  "List file attachments for a Microsoft Todo task.",
+  {
+    listId: z.string().describe("ID of the task list"),
+    taskId: z.string().describe("ID of the task"),
+  },
+  async ({ listId, taskId }) => {
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Failed to authenticate with Microsoft API",
+            },
+          ],
+        }
+      }
+
+      const response = await makeGraphRequest<{ value: TaskFileAttachment[] }>(
+        `${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}/attachments`,
+        token,
+      )
+
+      if (!response) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to retrieve attachments for task: ${taskId}`,
+            },
+          ],
+        }
+      }
+
+      const attachments = response.value || []
+      if (attachments.length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `No attachments found for task: ${taskId}`,
+            },
+          ],
+        }
+      }
+
+      const formattedAttachments = attachments.map((attachment) => {
+        const details = [
+          `ID: ${attachment.id}`,
+          `Name: ${attachment.name}`,
+          `Size: ${attachment.size ?? "Unknown"} bytes`,
+        ]
+
+        if (attachment.contentType) details.push(`Content Type: ${attachment.contentType}`)
+        if (attachment.lastModifiedDateTime) {
+          details.push(`Last Modified: ${new Date(attachment.lastModifiedDateTime).toLocaleString()}`)
+        }
+
+        return `${details.join("\n")}\n---`
+      })
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Attachments for task ${taskId}:\n\n${formattedAttachments.join("\n")}`,
+          },
+        ],
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error fetching attachments: ${error}`,
+          },
+        ],
+      }
+    }
+  },
+)
+
+server.tool(
+  "get-attachment",
+  "Get a single file attachment for a Microsoft Todo task.",
+  {
+    listId: z.string().describe("ID of the task list"),
+    taskId: z.string().describe("ID of the task"),
+    attachmentId: z.string().describe("ID of the attachment"),
+  },
+  async ({ listId, taskId, attachmentId }) => {
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Failed to authenticate with Microsoft API",
+            },
+          ],
+        }
+      }
+
+      const response = await makeGraphRequest<{ value?: TaskFileAttachment } | TaskFileAttachment>(
+        `${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}/attachments/${attachmentId}`,
+        token,
+      )
+
+      let attachment: TaskFileAttachment | undefined
+      if (response && typeof response === "object" && "value" in response) {
+        attachment = response.value
+      } else if (isTaskFileAttachment(response)) {
+        attachment = response
+      }
+      if (!attachment) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to retrieve attachment: ${attachmentId}`,
+            },
+          ],
+        }
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `Attachment details:\n\nID: ${attachment.id}\nName: ${attachment.name}` +
+              `${attachment.contentType ? `\nContent Type: ${attachment.contentType}` : ""}` +
+              `${attachment.size !== undefined ? `\nSize: ${attachment.size} bytes` : ""}` +
+              `${attachment.lastModifiedDateTime ? `\nLast Modified: ${new Date(attachment.lastModifiedDateTime).toLocaleString()}` : ""}` +
+              `${attachment.contentBytes ? `\nContent Bytes Present: Yes (${attachment.contentBytes.length} base64 chars)` : ""}`,
+          },
+        ],
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error fetching attachment: ${error}`,
+          },
+        ],
+      }
+    }
+  },
+)
+
+server.tool(
+  "create-attachment",
+  "Create a small file attachment on a Microsoft Todo task. For files larger than 3 MB, use create-attachment-upload-session.",
+  {
+    listId: z.string().describe("ID of the task list"),
+    taskId: z.string().describe("ID of the task"),
+    name: z.string().describe("Attachment display name"),
+    contentBytes: z.string().describe("Base64-encoded file contents"),
+    contentType: z.string().optional().describe("Attachment content type"),
+  },
+  async ({ listId, taskId, name, contentBytes, contentType }) => {
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Failed to authenticate with Microsoft API",
+            },
+          ],
+        }
+      }
+
+      const response = await makeGraphRequest<TaskFileAttachment>(
+        `${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}/attachments`,
+        token,
+        "POST",
+        {
+          "@odata.type": "#microsoft.graph.taskFileAttachment",
+          name,
+          contentBytes,
+          contentType,
+        },
+      )
+
+      if (!response) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to create attachment for task: ${taskId}`,
+            },
+          ],
+        }
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `Attachment created successfully!\nID: ${response.id}\nName: ${response.name}` +
+              `${response.size !== undefined ? `\nSize: ${response.size} bytes` : ""}`,
+          },
+        ],
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error creating attachment: ${error}`,
+          },
+        ],
+      }
+    }
+  },
+)
+
+server.tool(
+  "create-attachment-upload-session",
+  "Create an upload session for a large file attachment on a Microsoft Todo task.",
+  {
+    listId: z.string().describe("ID of the task list"),
+    taskId: z.string().describe("ID of the task"),
+    name: z.string().describe("Attachment display name"),
+    size: z.number().int().min(0).describe("Attachment size in bytes"),
+  },
+  async ({ listId, taskId, name, size }) => {
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Failed to authenticate with Microsoft API",
+            },
+          ],
+        }
+      }
+
+      const response = await makeGraphRequest<UploadSession>(
+        `${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}/attachments/createUploadSession`,
+        token,
+        "POST",
+        {
+          attachmentInfo: {
+            attachmentType: "file",
+            name,
+            size,
+          },
+        },
+      )
+
+      if (!response) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to create attachment upload session for task: ${taskId}`,
+            },
+          ],
+        }
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `Attachment upload session created successfully!\nUpload URL: ${response.uploadUrl}\nExpiration: ${response.expirationDateTime}\nNext Expected Ranges: ${response.nextExpectedRanges.join(", ")}`,
+          },
+        ],
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error creating attachment upload session: ${error}`,
+          },
+        ],
+      }
+    }
+  },
+)
+
+server.tool(
+  "delete-attachment",
+  "Delete a file attachment from a Microsoft Todo task.",
+  {
+    listId: z.string().describe("ID of the task list"),
+    taskId: z.string().describe("ID of the task"),
+    attachmentId: z.string().describe("ID of the attachment"),
+  },
+  async ({ listId, taskId, attachmentId }) => {
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Failed to authenticate with Microsoft API",
+            },
+          ],
+        }
+      }
+
+      await makeGraphRequest<null>(`${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}/attachments/${attachmentId}`, token, "DELETE")
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Attachment with ID: ${attachmentId} was successfully deleted from task: ${taskId}`,
+          },
+        ],
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error deleting attachment: ${error}`,
+          },
+        ],
+      }
+    }
+  },
+)
+
+server.tool(
   "get-checklist-items",
   "Get checklist items (subtasks) for a specific task. Checklist items are smaller steps or components that belong to a parent task.",
   {
@@ -1353,6 +2321,11 @@ server.tool(
           itemInfo += `\nCreated: ${createdDate}`
         }
 
+        if (item.checkedDateTime) {
+          const checkedDate = new Date(item.checkedDateTime).toLocaleString()
+          itemInfo += `\nChecked: ${checkedDate}`
+        }
+
         return itemInfo
       })
 
@@ -1385,8 +2358,10 @@ server.tool(
     taskId: z.string().describe("ID of the task"),
     displayName: z.string().describe("Text content of the checklist item"),
     isChecked: z.boolean().optional().describe("Whether the item is checked off"),
+    checkedDateTime: z.string().optional().describe("Completion timestamp in ISO format"),
+    createdDateTime: z.string().optional().describe("Creation timestamp in ISO format"),
   },
-  async ({ listId, taskId, displayName, isChecked }) => {
+  async ({ listId, taskId, displayName, isChecked, checkedDateTime, createdDateTime }) => {
     try {
       const token = await getAccessToken()
       if (!token) {
@@ -1407,6 +2382,14 @@ server.tool(
 
       if (isChecked !== undefined) {
         requestBody.isChecked = isChecked
+      }
+
+      if (checkedDateTime !== undefined) {
+        requestBody.checkedDateTime = checkedDateTime
+      }
+
+      if (createdDateTime !== undefined) {
+        requestBody.createdDateTime = createdDateTime
       }
 
       // Make the API request to create the checklist item
@@ -1458,8 +2441,13 @@ server.tool(
     checklistItemId: z.string().describe("ID of the checklist item to update"),
     displayName: z.string().optional().describe("New text content of the checklist item"),
     isChecked: z.boolean().optional().describe("Whether the item is checked off"),
+    checkedDateTime: z
+      .string()
+      .optional()
+      .describe("Completion timestamp in ISO format. Pass an empty string to clear it."),
+    createdDateTime: z.string().optional().describe("Creation timestamp in ISO format"),
   },
-  async ({ listId, taskId, checklistItemId, displayName, isChecked }) => {
+  async ({ listId, taskId, checklistItemId, displayName, isChecked, checkedDateTime, createdDateTime }) => {
     try {
       const token = await getAccessToken()
       if (!token) {
@@ -1484,13 +2472,21 @@ server.tool(
         requestBody.isChecked = isChecked
       }
 
+      if (checkedDateTime !== undefined) {
+        requestBody.checkedDateTime = checkedDateTime === "" ? null : checkedDateTime
+      }
+
+      if (createdDateTime !== undefined) {
+        requestBody.createdDateTime = createdDateTime
+      }
+
       // Make sure we have at least one property to update
       if (Object.keys(requestBody).length === 0) {
         return {
           content: [
             {
               type: "text",
-              text: "No properties provided for update. Please specify either displayName or isChecked.",
+              text: "No properties provided for update. Please specify at least one checklist item property to change.",
             },
           ],
         }
@@ -1693,8 +2689,12 @@ server.tool(
               importance: task.importance,
               completedDateTime: task.completedDateTime,
               dueDateTime: task.dueDateTime,
+              startDateTime: task.startDateTime,
               reminderDateTime: task.reminderDateTime,
+              isReminderOn: task.isReminderOn,
+              recurrence: task.recurrence,
               categories: task.categories,
+              linkedResources: task.linkedResources,
             },
           )
 
