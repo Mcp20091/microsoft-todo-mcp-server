@@ -196,7 +196,7 @@ pnpm run typecheck    # TypeScript type checking
 
 ## MCP Tools
 
-The server provides 27 tools for Microsoft To Do management.
+The server provides 28 tools for Microsoft To Do management.
 
 ### Authentication
 
@@ -219,8 +219,8 @@ The server provides 27 tools for Microsoft To Do management.
 - **`get-task`** - Retrieve a single task by ID
 - **`get-tasks-delta`** - Track changes to tasks in a list using Microsoft Graph delta queries
 - **`create-task`** - Create a new task with full property support
-  - Title, description, due date, start date, completed date, importance, reminders, recurrence, status, categories, linked resources
-- **`update-task`** - Update any task properties, including clearing due dates, reminders, start dates, and recurrence
+  - Title, description, due date, completed date, importance, reminders, recurrence, status, categories, linked resources
+- **`update-task`** - Update task properties, including clearing due dates, reminders, and recurrence
 - **`delete-task`** - Delete a task and all its checklist items
 
 ### Linked Resources
@@ -246,6 +246,7 @@ The server provides 27 tools for Microsoft To Do management.
 ### Utilities
 
 - **`archive-completed-tasks`** - Move completed tasks older than a specified age to another list
+- **`skip-task-to-current`** - Advance a recurring task to the next occurrence on or after today, similar to Microsoft To Do's "Skip to current task"
 - **`test-graph-api-exploration`** - Explore Microsoft Graph To Do endpoints and response shapes for troubleshooting
 
 ## Architecture
@@ -286,6 +287,10 @@ The server provides 27 tools for Microsoft To Do management.
   - send `recurrence.range` as an empty object (`{}`)
   - clear recurrence with `recurrence: null`
 - If you update recurrence without specifying `dueDateTime`, the server fetches the current task and reuses the existing due date when it is still on or after the current calendar date; otherwise you must provide a new `dueDateTime`
+- Recurring tasks cannot be created without `dueDateTime`; the MCP server now blocks that request with a descriptive validation error before sending it to Graph
+- Microsoft Graph also normalizes recurring tasks in a few ways:
+  - `recurrence.range.startDate` tracks `dueDateTime` on recurring tasks
+  - setting `isReminderOn` to `false` clears `reminderDateTime` in the MCP layer to match Graph's effective behavior
 
 ## Troubleshooting
 

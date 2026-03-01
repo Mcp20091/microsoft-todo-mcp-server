@@ -36,6 +36,11 @@ type GraphRequestErrorInfo = {
 
 let lastGraphRequestError: GraphRequestErrorInfo | null = null
 
+type RecurringDatePatchResult = {
+  task?: Task
+  error?: string
+}
+
 // Helper function for making Microsoft Graph API requests
 async function makeGraphRequest<T>(url: string, token: string, method = "GET", body?: any): Promise<T | null> {
   const headers = {
@@ -454,6 +459,13 @@ function buildRecurrencePatchPayload(recurrence: RecurrenceInput): PatternedRecu
   }
 }
 
+function buildRecurrencePatchPayloadFromExisting(recurrence: PatternedRecurrence): PatternedRecurrence {
+  return {
+    pattern: recurrence.pattern,
+    range: {} as PatternedRecurrence["range"],
+  }
+}
+
 function formatBodyForLog(body: unknown): string {
   if (body === undefined) return ""
 
@@ -524,6 +536,237 @@ function isFutureOrCurrentDateTime(value: DateTimeTimeZone): boolean {
   return dueDateOnly >= todayDateOnly
 }
 
+function parseDateOnly(value: string): Date | null {
+  const dateOnly = value.slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) return null
+
+  const [year, month, day] = dateOnly.split("-").map(Number)
+  return new Date(Date.UTC(year, month - 1, day))
+}
+
+function formatDateOnly(date: Date): string {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date.getTime())
+  next.setUTCDate(next.getUTCDate() + days)
+  return next
+}
+
+function addMonths(date: Date, months: number): Date {
+  const year = date.getUTCFullYear()
+  const month = date.getUTCMonth()
+  const day = date.getUTCDate()
+
+  const targetMonthStart = new Date(Date.UTC(year, month + months, 1))
+  const lastDayOfMonth = new Date(Date.UTC(targetMonthStart.getUTCFullYear(), targetMonthStart.getUTCMonth() + 1, 0)).getUTCDate()
+  return new Date(Date.UTC(targetMonthStart.getUTCFullYear(), targetMonthStart.getUTCMonth(), Math.min(day, lastDayOfMonth)))
+}
+
+function diffDays(start: Date, end: Date): number {
+  return Math.floor((end.getTime() - start.getTime()) / 86400000)
+}
+
+function diffMonths(start: Date, end: Date): number {
+  return (end.getUTCFullYear() - start.getUTCFullYear()) * 12 + (end.getUTCMonth() - start.getUTCMonth())
+}
+
+function diffYears(start: Date, end: Date): number {
+  return end.getUTCFullYear() - start.getUTCFullYear()
+}
+
+function getWeekdayIndex(day: string): number {
+  const normalized = day.toLowerCase()
+  const mapping: Record<string, number> = {
+    sunday: 0,
+    monday: 1,
+    tuesday: 2,
+    wednesday: 3,
+    thursday: 4,
+    friday: 5,
+    saturday: 6,
+  }
+
+  return mapping[normalized] ?? -1
+}
+
+function startOfWeek(date: Date, firstDayOfWeek: string): Date {
+  const first = getWeekdayIndex(firstDayOfWeek || "sunday")
+  const offset = (date.getUTCDay() - first + 7) % 7
+  return addDays(date, -offset)
+}
+
+function getMonthOccurrenceIndex(date: Date): number {
+  return Math.floor((date.getUTCDate() - 1) / 7)
+}
+
+function getLastOccurrenceIndexInMonth(date: Date): number {
+  const nextWeek = addDays(date, 7)
+  return nextWeek.getUTCMonth() !== date.getUTCMonth() ? getMonthOccurrenceIndex(date) : -1
+}
+
+function matchesRelativePattern(date: Date, daysOfWeek: string[], index?: string): boolean {
+  const allowedDays = daysOfWeek.map(getWeekdayIndex)
+  if (!allowedDays.includes(date.getUTCDay())) return false
+
+  const occurrenceIndex = getMonthOccurrenceIndex(date)
+  if (!index || index === "first") return occurrenceIndex === 0
+  if (index === "second") return occurrenceIndex === 1
+  if (index === "third") return occurrenceIndex === 2
+  if (index === "fourth") return occurrenceIndex === 3
+  if (index === "last") return getLastOccurrenceIndexInMonth(date) !== -1
+
+  return false
+}
+
+function matchesRecurrenceDate(date: Date, recurrence: PatternedRecurrence, anchorDate: Date): boolean {
+  const interval = recurrence.pattern.interval || 1
+
+  switch (recurrence.pattern.type) {
+    case "daily":
+      return diffDays(anchorDate, date) % interval === 0
+    case "weekly": {
+      const daysOfWeek = recurrence.pattern.daysOfWeek || []
+      if (daysOfWeek.length === 0) return false
+      const weekOffset = Math.floor(diffDays(startOfWeek(anchorDate, recurrence.pattern.firstDayOfWeek || "sunday"), startOfWeek(date, recurrence.pattern.firstDayOfWeek || "sunday")) / 7)
+      return weekOffset % interval === 0 && daysOfWeek.map(getWeekdayIndex).includes(date.getUTCDay())
+    }
+    case "absoluteMonthly":
+      return diffMonths(anchorDate, date) % interval === 0 && recurrence.pattern.dayOfMonth === date.getUTCDate()
+    case "relativeMonthly":
+      return diffMonths(anchorDate, date) % interval === 0 && matchesRelativePattern(date, recurrence.pattern.daysOfWeek || [], recurrence.pattern.index)
+    case "absoluteYearly":
+      return (
+        diffYears(anchorDate, date) % interval === 0 &&
+        recurrence.pattern.month === date.getUTCMonth() + 1 &&
+        recurrence.pattern.dayOfMonth === date.getUTCDate()
+      )
+    case "relativeYearly":
+      return (
+        diffYears(anchorDate, date) % interval === 0 &&
+        recurrence.pattern.month === date.getUTCMonth() + 1 &&
+        matchesRelativePattern(date, recurrence.pattern.daysOfWeek || [], recurrence.pattern.index)
+      )
+    default:
+      return false
+  }
+}
+
+function findNextCurrentOccurrence(task: Task): Date | null {
+  if (!task.recurrence || !task.dueDateTime?.dateTime) return null
+
+  const anchorDate = parseDateOnly(task.recurrence.range.startDate || task.dueDateTime.dateTime)
+  if (!anchorDate) return null
+
+  const today = parseDateOnly(new Date().toISOString())
+  if (!today) return null
+
+  const rangeEndDate =
+    task.recurrence.range.type === "endDate" && task.recurrence.range.endDate
+      ? parseDateOnly(task.recurrence.range.endDate)
+      : null
+
+  let occurrenceCount = 0
+  for (let offset = 0; offset <= 3660; offset++) {
+    const candidate = addDays(anchorDate, offset)
+    if (rangeEndDate && candidate > rangeEndDate) return null
+
+    if (matchesRecurrenceDate(candidate, task.recurrence, anchorDate)) {
+      occurrenceCount++
+      if (
+        task.recurrence.range.type === "numbered" &&
+        task.recurrence.range.numberOfOccurrences &&
+        occurrenceCount > task.recurrence.range.numberOfOccurrences
+      ) {
+        return null
+      }
+
+      if (candidate >= today) {
+        return candidate
+      }
+    }
+  }
+
+  return null
+}
+
+function replaceDatePortion(dateTime: string, date: Date): string {
+  const dateOnly = formatDateOnly(date)
+  const timePortion = dateTime.includes("T") ? dateTime.slice(dateTime.indexOf("T")) : "T00:00:00.0000000"
+  return `${dateOnly}${timePortion}`
+}
+
+function shiftDateTimeByDays(dateTime: string, days: number): string {
+  const baseDate = parseDateOnly(dateTime)
+  if (!baseDate) return dateTime
+  return replaceDatePortion(dateTime, addDays(baseDate, days))
+}
+
+async function patchRecurringTaskDateFields(
+  token: string,
+  listId: string,
+  taskId: string,
+  existingTask: Task,
+  taskBody: Record<string, unknown>,
+): Promise<RecurringDatePatchResult> {
+  if (!existingTask.recurrence) {
+    return { error: `Task ${taskId} does not have recurrence to preserve while updating date fields.` }
+  }
+
+  const effectiveDueDate =
+    taskBody.dueDateTime === undefined ? existingTask.dueDateTime : taskBody.dueDateTime === null ? null : (taskBody.dueDateTime as DateTimeTimeZone)
+
+  if (!effectiveDueDate) {
+    return {
+      error:
+        "Cannot update dueDateTime/reminderDateTime on a recurring task while ending up with no dueDateTime. " +
+        "Provide a dueDateTime or clear recurrence explicitly.",
+    }
+  }
+
+  const clearedRecurrence = await makeGraphRequest<Task>(`${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}`, token, "PATCH", {
+    recurrence: null,
+  })
+
+  if (!clearedRecurrence) {
+    return { error: `Failed to temporarily clear recurrence for task ${taskId} before updating date fields.` }
+  }
+
+  const bodyWithoutRecurrence = { ...taskBody }
+  delete bodyWithoutRecurrence.recurrence
+
+  let intermediateResponse: Task | null = clearedRecurrence
+  if (Object.keys(bodyWithoutRecurrence).length > 0) {
+    intermediateResponse = await makeGraphRequest<Task>(
+      `${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}`,
+      token,
+      "PATCH",
+      bodyWithoutRecurrence,
+    )
+
+    if (!intermediateResponse) {
+      return { error: `Failed to update task ${taskId} after clearing recurrence.` }
+    }
+  }
+
+  const restoredRecurrence = await makeGraphRequest<Task>(
+    `${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}`,
+    token,
+    "PATCH",
+    {
+      dueDateTime: effectiveDueDate,
+      recurrence: buildRecurrencePatchPayloadFromExisting(existingTask.recurrence),
+    },
+  )
+
+  if (!restoredRecurrence) {
+    return { error: `Failed to restore recurrence for task ${taskId} after updating its date fields.` }
+  }
+
+  return { task: restoredRecurrence }
+}
+
 function formatDateTime(value?: DateTimeTimeZone | null): string | null {
   if (!value?.dateTime) return null
 
@@ -568,6 +811,7 @@ function formatTask(task: Task): string {
   if (task.status) {
     const status = task.status === "completed" ? "✓" : "○"
     taskInfo = `${status} ${taskInfo}`
+    taskInfo += `\nStatus: ${task.status}`
   }
 
   const start = formatDateTime(task.startDateTime)
@@ -1531,7 +1775,6 @@ server.tool(
     title: z.string().describe("Title of the task"),
     body: z.string().optional().describe("Description or body content of the task"),
     dueDateTime: z.string().optional().describe("Due date in ISO format (e.g., 2023-12-31T23:59:59Z)"),
-    startDateTime: z.string().optional().describe("Start date in ISO format (e.g., 2023-12-31T23:59:59Z)"),
     completedDateTime: z.string().optional().describe("Completion date in ISO format"),
     importance: z.enum(["low", "normal", "high"]).optional().describe("Task importance"),
     isReminderOn: z.boolean().optional().describe("Whether to enable reminder for this task"),
@@ -1549,7 +1792,6 @@ server.tool(
     title,
     body,
     dueDateTime,
-    startDateTime,
     completedDateTime,
     importance,
     isReminderOn,
@@ -1587,10 +1829,6 @@ server.tool(
         taskBody.dueDateTime = buildDateTimeTimeZone(dueDateTime)
       }
 
-      if (startDateTime) {
-        taskBody.startDateTime = buildDateTimeTimeZone(startDateTime)
-      }
-
       if (completedDateTime) {
         taskBody.completedDateTime = buildDateTimeTimeZone(completedDateTime)
       }
@@ -1607,7 +1845,22 @@ server.tool(
         taskBody.reminderDateTime = buildDateTimeTimeZone(reminderDateTime)
       }
 
+      if (isReminderOn === false) {
+        taskBody.reminderDateTime = null
+      }
+
       if (recurrence) {
+        if (!taskBody.dueDateTime) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Recurring tasks require dueDateTime. Please provide dueDateTime or remove the recurrence.",
+              },
+            ],
+          }
+        }
+
         taskBody.recurrence = buildRecurrencePayload(recurrence)
       }
 
@@ -1671,7 +1924,6 @@ server.tool(
     title: z.string().optional().describe("New title of the task"),
     body: z.string().optional().describe("New description or body content of the task"),
     dueDateTime: z.string().optional().describe("New due date in ISO format (e.g., 2023-12-31T23:59:59Z)"),
-    startDateTime: z.string().optional().describe("New start date in ISO format (e.g., 2023-12-31T23:59:59Z)"),
     completedDateTime: z
       .string()
       .optional()
@@ -1692,7 +1944,6 @@ server.tool(
     title,
     body,
     dueDateTime,
-    startDateTime,
     completedDateTime,
     importance,
     isReminderOn,
@@ -1740,15 +1991,6 @@ server.tool(
         }
       }
 
-      if (startDateTime !== undefined) {
-        if (startDateTime === "") {
-          // Remove the start date by setting it to null
-          taskBody.startDateTime = null
-        } else {
-          taskBody.startDateTime = buildDateTimeTimeZone(startDateTime)
-        }
-      }
-
       if (completedDateTime !== undefined) {
         if (completedDateTime === "") {
           taskBody.completedDateTime = null
@@ -1772,6 +2014,10 @@ server.tool(
         } else {
           taskBody.reminderDateTime = buildDateTimeTimeZone(reminderDateTime)
         }
+      }
+
+      if (isReminderOn === false) {
+        taskBody.reminderDateTime = null
       }
 
       if (recurrence !== undefined) {
@@ -1840,6 +2086,47 @@ server.tool(
 
       if (categories !== undefined) {
         taskBody.categories = categories
+      }
+
+      const isRecurringTaskDateAdjustment =
+        recurrence === undefined && (taskBody.dueDateTime !== undefined || taskBody.reminderDateTime !== undefined)
+
+      if (isRecurringTaskDateAdjustment) {
+        existingTask = existingTask || (await makeGraphRequest<Task>(`${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}`, token))
+
+        if (!existingTask) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Failed to load task ${taskId} before updating recurring task dates.`,
+              },
+            ],
+          }
+        }
+
+        if (existingTask.recurrence) {
+          const recurringPatchResult = await patchRecurringTaskDateFields(token, listId, taskId, existingTask, taskBody)
+          if (recurringPatchResult.error || !recurringPatchResult.task) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: recurringPatchResult.error || `Failed to update recurring task ${taskId}.`,
+                },
+              ],
+            }
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Task updated successfully!\nID: ${recurringPatchResult.task.id}\nTitle: ${recurringPatchResult.task.title}`,
+              },
+            ],
+          }
+        }
       }
 
       // Make sure we have at least one property to update
@@ -1954,6 +2241,168 @@ server.tool(
           {
             type: "text",
             text: `Error deleting task: ${error}`,
+          },
+        ],
+      }
+    }
+  },
+)
+
+server.tool(
+  "skip-task-to-current",
+  "Advance a recurring task to the next occurrence on or after today, similar to Microsoft To Do's 'Skip to current task'. Preserves the recurrence and shifts the reminder by the same number of days when present.",
+  {
+    listId: z.string().describe("ID of the task list"),
+    taskId: z.string().describe("ID of the recurring task"),
+    dryRun: z.boolean().optional().describe("Preview the calculated due/reminder dates without modifying the task"),
+  },
+  async ({ listId, taskId, dryRun = false }) => {
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Failed to authenticate with Microsoft API",
+            },
+          ],
+        }
+      }
+
+      const task = await makeGraphRequest<Task>(`${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}`, token)
+      if (!task) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to load task ${taskId}.`,
+            },
+          ],
+        }
+      }
+
+      if (!task.recurrence) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "This task does not have recurrence, so there is nothing to skip.",
+            },
+          ],
+        }
+      }
+
+      if (!task.dueDateTime?.dateTime) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Recurring tasks need dueDateTime in order to skip to the current occurrence.",
+            },
+          ],
+        }
+      }
+
+      const currentDueDate = parseDateOnly(task.dueDateTime.dateTime)
+      const targetDueDate = findNextCurrentOccurrence(task)
+      if (!currentDueDate || !targetDueDate) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Could not calculate the next current occurrence for this recurring task.",
+            },
+          ],
+        }
+      }
+
+      if (targetDueDate <= currentDueDate) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Task is already on the current occurrence.\nDue Date: ${formatDateOnly(currentDueDate)}`,
+            },
+          ],
+        }
+      }
+
+      const deltaDays = diffDays(currentDueDate, targetDueDate)
+      const nextDueDateTime: DateTimeTimeZone = {
+        dateTime: replaceDatePortion(task.dueDateTime.dateTime, targetDueDate),
+        timeZone: task.dueDateTime.timeZone,
+      }
+
+      const patchBody: Record<string, unknown> = {
+        dueDateTime: nextDueDateTime,
+      }
+
+      if (task.reminderDateTime?.dateTime) {
+        patchBody.reminderDateTime = {
+          dateTime: shiftDateTimeByDays(task.reminderDateTime.dateTime, deltaDays),
+          timeZone: task.reminderDateTime.timeZone,
+        }
+      }
+
+      if (dryRun) {
+        let preview =
+          `Skip Preview\nTask: ${task.title}\nCurrent Due Date: ${formatDateOnly(currentDueDate)}\nNew Due Date: ${formatDateOnly(targetDueDate)}`
+
+        if (task.reminderDateTime?.dateTime) {
+          preview +=
+            `\nCurrent Reminder: ${task.reminderDateTime.dateTime} (${task.reminderDateTime.timeZone})` +
+            `\nNew Reminder: ${(patchBody.reminderDateTime as DateTimeTimeZone).dateTime} ` +
+            `(${(patchBody.reminderDateTime as DateTimeTimeZone).timeZone})`
+        }
+
+        preview += `\nShift Applied: ${deltaDays} day(s)`
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: preview,
+            },
+          ],
+        }
+      }
+
+      const recurringPatchResult = await patchRecurringTaskDateFields(token, listId, taskId, task, patchBody)
+      if (recurringPatchResult.error || !recurringPatchResult.task) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: recurringPatchResult.error || `Failed to skip recurring task ${taskId} to the current occurrence.`,
+            },
+          ],
+        }
+      }
+
+      let result =
+        `Task advanced to current occurrence.\nID: ${recurringPatchResult.task.id}\nTitle: ${recurringPatchResult.task.title}` +
+        `\nDue Date: ${formatDateOnly(targetDueDate)}\nShift Applied: ${deltaDays} day(s)`
+
+      if (patchBody.reminderDateTime) {
+        const newReminder = patchBody.reminderDateTime as DateTimeTimeZone
+        result += `\nReminder: ${newReminder.dateTime} (${newReminder.timeZone})`
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: result,
+          },
+        ],
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error skipping recurring task to current occurrence: ${error}`,
           },
         ],
       }
