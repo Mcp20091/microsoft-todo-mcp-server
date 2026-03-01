@@ -18,13 +18,13 @@ A Model Context Protocol (MCP) server that enables AI assistants like Claude and
 ## Prerequisites
 
 - Node.js 18 or higher (tested with Node.js 18.x, 20.x, and 22.x)
-- pnpm package manager
+- npm or pnpm
 - A Microsoft account (personal, work, or school)
 - Azure App Registration (see setup below)
 
 ## Installation
 
-### Option 1: Global Installation (Recommended)
+### Option 1: Global Installation
 
 ```bash
 # Install globally using npm
@@ -37,11 +37,12 @@ pnpm install -g microsoft-todo-mcp-server
 npx microsoft-todo-mcp-server
 ```
 
-The package provides three command aliases:
+The package provides these command aliases:
 
 - `microsoft-todo-mcp-server` - Full package name
 - `mstodo` - Short alias for the MCP server
 - `mstodo-config` - Configuration helper tool
+- `mstodo-setup` - Setup helper
 
 ### Option 2: Clone and Run Locally
 
@@ -123,28 +124,43 @@ export MS_TODO_REFRESH_TOKEN=your_refresh_token
 
 ### Complete Setup Workflow
 
+Choose one of these setup paths.
+
+#### Option A: Installed Globally
+
+```bash
+# Build-free setup for global installs
+mstodo-setup
+```
+
+#### Option B: Running from a Local Clone
+
+```bash
+pnpm install
+pnpm run build
+pnpm run auth
+pnpm run create-config
+```
+
+Authentication opens a browser window and creates a token file. Configuration generation creates an `mcp.json` file from those tokens.
+
 #### Step 1: Authenticate with Microsoft
 
 ```bash
-# If installed globally
-git clone https://github.com/jordanburke/microsoft-todo-mcp-server.git
-cd microsoft-todo-mcp-server
-pnpm install
+# Local clone
 pnpm run auth
 
-# Or if running locally
-pnpm run auth
+# Global install
+mstodo-setup
 ```
-
-This opens a browser window for Microsoft authentication and creates a `tokens.json` file.
 
 #### Step 2: Create MCP Configuration
 
 ```bash
-# Generate MCP configuration file
+# Local clone
 pnpm run create-config
 
-# Or use the global helper (if installed globally)
+# Global install
 mstodo-config
 ```
 
@@ -196,6 +212,7 @@ npx microsoft-todo-mcp-server  # Run globally installed version
 
 # Authentication & Configuration
 pnpm run auth         # Start OAuth authentication server
+pnpm run setup        # Run setup helper
 pnpm run create-config # Generate mcp.json from tokens.json
 
 # Code Quality
@@ -207,7 +224,7 @@ pnpm run typecheck    # TypeScript type checking
 
 ## MCP Tools
 
-The server provides 27 tools for comprehensive Microsoft To Do management:
+The server provides 27 tools for Microsoft To Do management.
 
 ### Authentication
 
@@ -273,7 +290,7 @@ The server provides 27 tools for comprehensive Microsoft To Do management:
 - **Microsoft Graph API**: Uses v1.0 endpoints
 - **Authentication**: MSAL (Microsoft Authentication Library) with PKCE flow
 - **Token Management**: Automatic refresh 5 minutes before expiration
-- **Build System**: tsup for fast TypeScript compilation
+- **Build System**: tsup targeting Node.js 18 with ESM output
 - **Module System**: ESM (ECMAScript modules)
 
 ## Limitations & Known Issues
