@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs"
+import { readFileSync, writeFileSync, existsSync } from "fs"
 import { join } from "path"
 import { homedir } from "os"
 import { spawn } from "child_process"
@@ -19,13 +19,8 @@ async function setup() {
   console.log("🚀 Microsoft To Do MCP Server Setup")
   console.log("==================================\n")
 
-  // Check if already configured
-  const configDir =
-    process.platform === "win32"
-      ? join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), "microsoft-todo-mcp")
-      : join(homedir(), ".config", "microsoft-todo-mcp")
-
-  const tokenPath = join(configDir, "tokens.json")
+  // Use repo-local token storage for the local fork workflow
+  const tokenPath = join(process.cwd(), "tokens.json")
 
   if (existsSync(tokenPath)) {
     const answer = await question("Tokens already exist. Reconfigure? (y/N): ")
@@ -76,10 +71,8 @@ REDIRECT_URI=http://localhost:3000/callback
       console.log("\n✅ Authentication successful!")
 
       // Check if tokens were created
-      const localTokens = join(process.cwd(), "tokens.json")
-      if (existsSync(localTokens)) {
-        // Move tokens to proper location and add client credentials
-        const tokens = JSON.parse(readFileSync(localTokens, "utf8"))
+      if (existsSync(tokenPath)) {
+        const tokens = JSON.parse(readFileSync(tokenPath, "utf8"))
         const env = readFileSync(".env", "utf8")
 
         const clientId = env.match(/CLIENT_ID=(.+)/)?.[1]
@@ -94,10 +87,7 @@ REDIRECT_URI=http://localhost:3000/callback
           tenantId,
         }
 
-        // Create directory if needed
-        mkdirSync(configDir, { recursive: true })
-
-        // Save to proper location
+        // Save back to the repo-local token file with refresh metadata
         writeFileSync(tokenPath, JSON.stringify(enhancedTokens, null, 2))
 
         console.log(`\n📁 Tokens saved to: ${tokenPath}`)
@@ -118,6 +108,7 @@ REDIRECT_URI=http://localhost:3000/callback
 
 async function updateClaudeConfig() {
   const cliPath = join(process.cwd(), "dist", "cli.js")
+  const tokenPath = join(process.cwd(), "tokens.json")
   const claudeConfigPath =
     process.platform === "win32"
       ? join(process.env.APPDATA || "", "Claude", "claude_desktop_config.json")
@@ -133,7 +124,9 @@ async function updateClaudeConfig() {
           microsoftTodo: {
             command: "node",
             args: [cliPath],
-            env: {},
+            env: {
+              MSTODO_TOKEN_FILE: tokenPath,
+            },
           },
         },
         null,
@@ -157,7 +150,10 @@ async function updateClaudeConfig() {
       ...existingServerConfig,
       command: "node",
       args: [cliPath],
-      env: {}, // No need for tokens in env anymore!
+      env: {
+        ...(existingServerConfig.env || {}),
+        MSTODO_TOKEN_FILE: tokenPath,
+      },
     }
 
     if (config.mcpServers["microsoft-todo"]) {

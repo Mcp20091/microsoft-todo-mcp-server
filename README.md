@@ -32,7 +32,7 @@ pnpm install
 pnpm run build
 ```
 
-This fork is documented primarily for local use from your own checkout. The setup helpers generate MCP config that points at your local built `dist/cli.js`.
+This fork is documented primarily for local use from your own checkout. The setup helpers generate MCP config that points at your local built `dist/cli.js` and your repo-local `tokens.json`.
 
 ## Azure App Registration
 
@@ -92,15 +92,13 @@ TENANT_ID=00000000-0000-0000-0000-000000000000
 
 The server stores authentication tokens with automatic refresh 5 minutes before expiration.
 
-Default token location:
-- Windows: `%APPDATA%\microsoft-todo-mcp\tokens.json`
-- macOS/Linux: `~/.config/microsoft-todo-mcp/tokens.json`
+For this fork's local workflow, the expected token file is:
+- `./tokens.json` in the repo root
 
 `pnpm run create-config` resolves tokens in this order:
 1. explicit CLI argument
 2. `MSTODO_TOKEN_FILE`
-3. `./tokens.json` in the current directory, if present
-4. the default per-user config path above
+3. `./tokens.json` in the current directory
 
 You can override the token file location:
 
@@ -140,7 +138,7 @@ pnpm run auth
 pnpm run create-config
 ```
 
-This creates an `mcp.json` file that points to your local built `dist/cli.js`.
+This creates an `mcp.json` file that points to your local built `dist/cli.js` and your repo-local `tokens.json`.
 
 #### Step 3: Configure Your AI Assistant
 
@@ -157,7 +155,10 @@ Add to your configuration file:
   "mcpServers": {
     "microsoftTodo": {
       "command": "node",
-      "args": ["/ABSOLUTE/PATH/TO/microsoft-todo-mcp-server/dist/cli.js"]
+      "args": ["C:\\ABSOLUTE\\PATH\\TO\\microsoft-todo-mcp-server\\dist\\cli.js"],
+      "env": {
+        "MSTODO_TOKEN_FILE": "C:\\ABSOLUTE\\PATH\\TO\\microsoft-todo-mcp-server\\tokens.json"
+      }
     }
   }
 }
@@ -323,14 +324,14 @@ TENANT_ID=consumers  # Personal only
 Windows PowerShell:
 
 ```powershell
-$tokenPath = Join-Path $env:APPDATA 'microsoft-todo-mcp\tokens.json'
+$tokenPath = Join-Path (Get-Location) 'tokens.json'
 Get-Content $tokenPath
 ```
 
 macOS/Linux:
 
 ```bash
-cat ~/.config/microsoft-todo-mcp/tokens.json
+cat ./tokens.json
 ```
 
 **Enable verbose logging:**
