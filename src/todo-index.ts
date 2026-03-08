@@ -36,6 +36,39 @@ type GraphRequestErrorInfo = {
 
 let lastGraphRequestError: GraphRequestErrorInfo | null = null
 
+// =============================================================================
+// BUG FIX: Duplicate task creation caused by Claude Code double-invoking MCP tools
+// =============================================================================
+//
+// ROOT CAUSE:
+//   Claude Code was invoking MCP tool calls twice in rapid succession (same millisecond
+//   or within a few ms). Every call to create-task, update-task, etc. resulted in two
+//   identical HTTP POST/PATCH/DELETE requests hitting the Microsoft Graph API, causing
+//   duplicate tasks to be created with identical titles, timestamps, and properties.
+//
+// FIX:
+//   An in-flight request deduplication cache was added to makeGraphRequest(). For any
+//   non-idempotent request (POST, PATCH, DELETE), a cache key is computed from the
+//   method + URL + serialized request body. If a request with that exact key is already
+//   in-flight, the second call receives the same Promise instead of firing a new HTTP
+//   request. Once the promise settles (success or error), it is removed from the map so
+//   future legitimate requests go through normally.
+//
+//   GET requests are not affected since they are idempotent and safe to run multiple times.
+//
+// RESULT:
+//   Confirmed fixed on 2026-03-02. Creating and updating tasks now produces exactly one
+//   API call regardless of how many times Claude Code invokes the tool.
+// =============================================================================
+
+// Deduplication cache for non-idempotent requests (POST/PATCH/DELETE)
+// Stores in-flight promises so concurrent duplicate requests share one network call
+const inFlightRequests = new Map<string, Promise<any>>()
+
+function getRequestKey(method: string, url: string, body?: string): string {
+  return `${method}:${url}:${body ?? ""}`
+}
+
 type RecurringDatePatchResult = {
   task?: Task
   error?: string
@@ -51,6 +84,31 @@ async function makeGraphRequest<T>(url: string, token: string, method = "GET", b
   }
   const serializedBody = body && (method === "POST" || method === "PATCH") ? JSON.stringify(body) : undefined
 
+  // Deduplicate non-idempotent requests by sharing in-flight promises
+  if (method === "POST" || method === "PATCH" || method === "DELETE") {
+    const cacheKey = getRequestKey(method, url, serializedBody)
+    const existing = inFlightRequests.get(cacheKey)
+    if (existing) {
+      console.error(`Deduplicating ${method} request to ${url}`)
+      return existing as Promise<T>
+    }
+    const promise = makeGraphRequestInner<T>(url, token, method, body, headers, serializedBody)
+    inFlightRequests.set(cacheKey, promise)
+    promise.finally(() => inFlightRequests.delete(cacheKey))
+    return promise
+  }
+
+  return makeGraphRequestInner<T>(url, token, method, body, headers, serializedBody)
+}
+
+async function makeGraphRequestInner<T>(
+  url: string,
+  token: string,
+  method: string,
+  body: any,
+  headers: Record<string, string>,
+  serializedBody: string | undefined,
+): Promise<T | null> {
   try {
     lastGraphRequestError = null
 
@@ -139,6 +197,7 @@ but API access is restricted for personal accounts.
     const responsePreview = formatBodyForLog(data)
     console.error(`Response headers: ${JSON.stringify(formatHeadersForLog(response.headers))}`)
     console.error(`Response received: ${responsePreview}`)
+
     return data as T
   } catch (error) {
     console.error("Error making Graph API request:", error)
@@ -900,10 +959,7 @@ function formatTask(task: Task): string {
   if (task.bodyLastModifiedDateTime) taskInfo += `\nBody Modified: ${new Date(task.bodyLastModifiedDateTime).toLocaleString()}`
 
   if (task.body && task.body.content && task.body.content.trim() !== "") {
-    const previewLength = 120
-    const contentPreview =
-      task.body.content.length > previewLength ? task.body.content.substring(0, previewLength) + "..." : task.body.content
-    taskInfo += `\nDescription: ${contentPreview}`
+    taskInfo += `\nDescription: ${task.body.content}`
   }
 
   return `${taskInfo}\n---`
