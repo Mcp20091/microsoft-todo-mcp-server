@@ -8,6 +8,7 @@
     "@modelcontextprotocol/sdk": "^1.21.1",
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
+    "ollama": "^0.5.0",
     "zod": "^3.25.76"
   },
   "scripts": {
@@ -19,6 +20,7 @@
     "auth": "node dist/auth-server.js",
     "setup": "node dist/setup.js",
     "dev": "pnpm run build && node dist/cli.js",
+    "ollama": "pnpm run build && node dist/ollama-agent.js",
     "create-config": "node dist/create-mcp-config.js",
     "format": "prettier --write \"src/**/*.{ts,js,json}\" \"*.{json,md}\"",
     "format:check": "prettier --check \"src/**/*.{ts,js,json}\" \"*.{json,md}\"",
