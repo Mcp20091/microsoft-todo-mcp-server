@@ -172,6 +172,91 @@ Add to your configuration file:
 cp mcp.json ~/.cursor/mcp-servers.json
 ```
 
+### Using with Ollama (Local LLM)
+
+You can manage your Microsoft To Do tasks using a local Ollama model instead of Claude or Cursor.
+
+#### Prerequisites
+
+1. Install [Ollama](https://ollama.com/download) and start it
+2. Pull a model that supports tool/function calling:
+
+```bash
+ollama pull llama3.2
+```
+
+Recommended models: `llama3.2`, `llama3.1`, `qwen2.5`, `qwen3`, `mistral`
+
+#### Steps
+
+**Step 1: Complete the standard setup** (authentication and build) if you haven't already:
+
+```bash
+pnpm install
+pnpm run build
+pnpm run auth
+```
+
+**Step 2: Start the Ollama agent:**
+
+```bash
+pnpm run ollama
+```
+
+**Step 3: Type your request in plain English:**
+
+```
+You: Show me all my task lists
+You: Create a task called "Buy groceries" in my Personal list
+You: Mark the "Buy groceries" task as complete
+```
+
+Type `exit` or `quit` to stop.
+
+#### Configuration
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `OLLAMA_MODEL` | `llama3.2` | Model to use |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
+
+**Windows (PowerShell):**
+
+```powershell
+$env:OLLAMA_MODEL="qwen2.5"; pnpm run ollama
+```
+
+**Windows (Command Prompt):**
+
+```cmd
+set OLLAMA_MODEL=qwen2.5 && pnpm run ollama
+```
+
+**macOS/Linux:**
+
+```bash
+OLLAMA_MODEL=qwen2.5 pnpm run ollama
+```
+
+#### Windows Notes
+
+Ollama on Windows listens on `localhost:11434` by default — no extra configuration needed when running natively.
+
+If you are running the MCP server inside **WSL** while Ollama runs on Windows, set `OLLAMA_HOST` to the Windows host IP so WSL can reach it:
+
+```bash
+# In WSL, find the Windows host IP
+cat /etc/resolv.conf | grep nameserver
+# Then set it:
+OLLAMA_HOST=http://172.x.x.x:11434 pnpm run ollama
+```
+
+You may also need to allow cross-environment access in Ollama. Set this in Windows environment variables and restart Ollama:
+
+```
+OLLAMA_HOST=0.0.0.0
+```
+
 ### Available Scripts
 
 ```bash
@@ -182,6 +267,7 @@ pnpm run dev          # Build and run CLI in one command
 # Running the Server
 pnpm start            # Run MCP server directly
 pnpm run cli          # Run MCP server via CLI wrapper
+pnpm run ollama       # Start interactive Ollama chat agent
 
 # Authentication & Configuration
 pnpm run auth         # Start OAuth authentication server
