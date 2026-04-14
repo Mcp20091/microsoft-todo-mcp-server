@@ -1066,9 +1066,8 @@ server.tool(
   "Get a single Microsoft Todo task list by ID.",
   {
     listId: z.string().describe("ID of the task list"),
-    select: z.string().optional().describe("Comma-separated list of properties to include"),
   },
-  async ({ listId, select }) => {
+  async ({ listId }) => {
     try {
       const token = await getAccessToken()
       if (!token) {
@@ -1082,11 +1081,7 @@ server.tool(
         }
       }
 
-      const queryParams = new URLSearchParams()
-      if (select) queryParams.append("$select", select)
-
-      const queryString = queryParams.toString()
-      const url = `${MS_GRAPH_BASE}/me/todo/lists/${listId}${queryString ? "?" + queryString : ""}`
+      const url = `${MS_GRAPH_BASE}/me/todo/lists/${listId}`
       const list = await makeGraphRequest<TaskList>(url, token)
 
       if (!list) {
@@ -1650,13 +1645,12 @@ server.tool(
   {
     listId: z.string().describe("ID of the task list"),
     filter: z.string().optional().describe("OData $filter query (e.g., 'status eq \\'completed\\'')"),
-    select: z.string().optional().describe("Comma-separated list of properties to include (e.g., 'id,title,status')"),
     orderby: z.string().optional().describe("Property to sort by (e.g., 'createdDateTime desc')"),
     top: z.number().optional().describe("Maximum number of tasks to retrieve"),
     skip: z.number().optional().describe("Number of tasks to skip"),
     count: z.boolean().optional().describe("Whether to include a count of tasks"),
   },
-  async ({ listId, filter, select, orderby, top, skip, count }) => {
+  async ({ listId, filter, orderby, top, skip, count }) => {
     try {
       const token = await getAccessToken()
       if (!token) {
@@ -1674,7 +1668,6 @@ server.tool(
       const queryParams = new URLSearchParams()
 
       if (filter) queryParams.append("$filter", filter)
-      if (select) queryParams.append("$select", select)
       if (orderby) queryParams.append("$orderby", orderby)
       if (top !== undefined) queryParams.append("$top", top.toString())
       if (skip !== undefined) queryParams.append("$skip", skip.toString())
@@ -1746,9 +1739,8 @@ server.tool(
   {
     listId: z.string().describe("ID of the task list"),
     taskId: z.string().describe("ID of the task"),
-    select: z.string().optional().describe("Comma-separated list of properties to include"),
   },
-  async ({ listId, taskId, select }) => {
+  async ({ listId, taskId }) => {
     try {
       const token = await getAccessToken()
       if (!token) {
@@ -1762,11 +1754,7 @@ server.tool(
         }
       }
 
-      const queryParams = new URLSearchParams()
-      if (select) queryParams.append("$select", select)
-
-      const queryString = queryParams.toString()
-      const url = `${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}${queryString ? "?" + queryString : ""}`
+      const url = `${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}`
       const task = await makeGraphRequest<Task>(url, token)
 
       if (!task) {
