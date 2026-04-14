@@ -1128,10 +1128,9 @@ server.tool(
     deltaUrl: z.string().optional().describe("Full @odata.nextLink or @odata.deltaLink URL from a previous delta response"),
     deltaToken: z.string().optional().describe("Delta token from a previous delta response"),
     skipToken: z.string().optional().describe("Skip token from a previous delta response"),
-    select: z.string().optional().describe("Comma-separated list of properties to include on the initial request"),
     maxPageSize: z.number().int().min(1).optional().describe("Preferred maximum number of lists returned"),
   },
-  async ({ deltaUrl, deltaToken, skipToken, select, maxPageSize }) => {
+  async ({ deltaUrl, deltaToken, skipToken, maxPageSize }) => {
     try {
       const token = await getAccessToken()
       if (!token) {
@@ -1150,7 +1149,6 @@ server.tool(
         const queryParams = new URLSearchParams()
         if (deltaToken) queryParams.append("$deltatoken", deltaToken)
         if (skipToken) queryParams.append("$skiptoken", skipToken)
-        if (select) queryParams.append("$select", select)
         const queryString = queryParams.toString()
         if (queryString) url += `?${queryString}`
       }
@@ -1797,12 +1795,11 @@ server.tool(
     deltaUrl: z.string().optional().describe("Full @odata.nextLink or @odata.deltaLink URL from a previous delta response"),
     deltaToken: z.string().optional().describe("Delta token from a previous delta response"),
     skipToken: z.string().optional().describe("Skip token from a previous delta response"),
-    select: z.string().optional().describe("Comma-separated list of properties to include on the initial request"),
     top: z.number().int().min(1).optional().describe("Maximum number of tasks to retrieve on the initial request"),
     expand: z.string().optional().describe("OData $expand expression for the initial request"),
     maxPageSize: z.number().int().min(1).optional().describe("Preferred maximum number of tasks returned"),
   },
-  async ({ listId, deltaUrl, deltaToken, skipToken, select, top, expand, maxPageSize }) => {
+  async ({ listId, deltaUrl, deltaToken, skipToken, top, expand, maxPageSize }) => {
     try {
       const token = await getAccessToken()
       if (!token) {
@@ -1821,7 +1818,6 @@ server.tool(
         const queryParams = new URLSearchParams()
         if (deltaToken) queryParams.append("$deltatoken", deltaToken)
         if (skipToken) queryParams.append("$skiptoken", skipToken)
-        if (select) queryParams.append("$select", select)
         if (top !== undefined) queryParams.append("$top", top.toString())
         if (expand) queryParams.append("$expand", expand)
         const queryString = queryParams.toString()
