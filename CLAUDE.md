@@ -15,7 +15,8 @@ pnpm run dev         # Build and run CLI in one command
 ### Authentication and Setup
 
 ```bash
-pnpm run auth        # Start OAuth authentication server (port 3000)
+pnpm run auth:device <CLIENT_ID>  # Device code sign-in: client ID only, no secret
+pnpm run auth        # Start OAuth authentication server (port 3000, needs CLIENT_SECRET)
 pnpm run create-config # Generate mcp.json from tokens.json
 ```
 
@@ -33,6 +34,7 @@ This is a Model Context Protocol (MCP) server that enables AI assistants to inte
 1. **MCP Server** (`src/todo-index.ts`): Core server implementing the MCP protocol with 13 tools for Microsoft To Do operations
 2. **CLI Wrapper** (`src/cli.ts`): Executable entry point that handles token loading from environment or file
 3. **Auth Server** (`src/auth-server.js`): Express server implementing OAuth 2.0 flow with MSAL
+   - **Device Code Sign-in** (`src/device-auth.ts`): public-client device code flow; tokens refresh without a secret
 4. **Config Generator** (`src/create-mcp-config.ts`): Utility to create MCP configuration files
 
 ### Key Architectural Patterns
@@ -53,7 +55,7 @@ The server communicates with Microsoft Graph API v1.0:
 ### Environment Configuration
 
 - `MSTODO_TOKEN_FILE`: Custom path for tokens.json (defaults to ./tokens.json)
-- `.env` file required for authentication with CLIENT_ID, CLIENT_SECRET, TENANT_ID, REDIRECT_URI
+- `.env` file required for the browser redirect flow (`pnpm run auth`) with CLIENT_ID, CLIENT_SECRET, TENANT_ID, REDIRECT_URI; device code sign-in needs only a client ID
 
 ## Important Notes
 
