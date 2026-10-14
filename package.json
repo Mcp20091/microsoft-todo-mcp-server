@@ -17,6 +17,7 @@
     "start": "node dist/todo-index.js",
     "cli": "node dist/cli.js",
     "auth": "node dist/auth-server.js",
+    "auth:device": "node dist/device-auth.js",
     "setup": "node dist/setup.js",
     "dev": "pnpm run build && node dist/cli.js",
     "create-config": "node dist/create-mcp-config.js",

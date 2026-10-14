@@ -39,6 +39,24 @@ This fork is documented primarily for local use from your own checkout. The setu
 
 ## Azure App Registration
 
+There are two ways to sign in. Pick one:
+
+- **Device code (recommended)** - needs only the app's client ID. No client secret, no redirect URI, no `.env` file. You sign in on any browser with a short code, and Microsoft asks you to consent to the permissions the server requests.
+- **Browser redirect with a client secret** - the original flow (`pnpm run auth`).
+
+### Option A: Device code (client ID only)
+
+1. Go to [Microsoft Entra admin center](https://entra.microsoft.com) > App registrations > New registration
+2. Name it (e.g., "To Do MCP")
+3. For "Supported account types", choose **Accounts in any organizational directory and personal Microsoft accounts** (or **Personal Microsoft accounts only** for a personal account)
+4. Leave the redirect URI empty and register
+5. Under **Authentication** > **Advanced settings**, set **Allow public client flows** to **Yes** and save
+6. Copy the **Application (client) ID**
+
+API permissions do not need to be added in advance: the sign-in requests them (`Tasks.Read`, `Tasks.ReadWrite`, `Tasks.Read.Shared`, `Tasks.ReadWrite.Shared`, `User.Read`, `offline_access`) and you consent when you approve. One app registration can be shared with other device-code clients, such as an e-reader.
+
+### Option B: Browser redirect with a client secret
+
 1. Go to the [Azure Portal](https://portal.azure.com)
 2. Navigate to "App registrations" and create a new registration
 3. Name your application (e.g., "To Do MCP")
@@ -59,7 +77,9 @@ This fork is documented primarily for local use from your own checkout. The setu
 
 ### Environment Setup
 
-Create a `.env` file in the project root (required for authentication):
+Device code sign-in (Option A) needs no `.env` file; pass the client ID on the command line instead (see [Usage](#usage)).
+
+For Option B, create a `.env` file in the project root:
 
 ```env
 CLIENT_ID=your_client_id
@@ -96,9 +116,11 @@ TENANT_ID=00000000-0000-0000-0000-000000000000
 The server stores authentication tokens with automatic refresh 5 minutes before expiration.
 
 For this fork's local workflow, the expected token file is:
+
 - `./tokens.json` in the repo root
 
 `pnpm run create-config` resolves tokens in this order:
+
 1. explicit CLI argument
 2. `MSTODO_TOKEN_FILE`
 3. `./tokens.json` in the current directory
@@ -121,17 +143,38 @@ For this fork, the expected workflow is to run from a local clone:
 ```bash
 pnpm install
 pnpm run build
-pnpm run auth
+pnpm run auth:device YOUR_CLIENT_ID   # or: pnpm run auth (Option B)
 pnpm run create-config
 ```
 
-Authentication opens a browser window and creates a token file. Configuration generation creates an `mcp.json` file from those tokens.
+Authentication creates a token file. Configuration generation creates an `mcp.json` file from those tokens.
 
 #### Step 1: Authenticate with Microsoft
+
+**Device code (Option A):**
+
+```bash
+pnpm run auth:device YOUR_CLIENT_ID
+```
+
+It prints a code. Open `https://microsoft.com/devicelogin`, enter the code, sign in and approve. The tokens are saved with the client ID and tenant, and refresh without a client secret.
+
+- The client ID can also come from the `CLIENT_ID` environment variable.
+- `TENANT_ID` defaults to `common`. An app registered for personal accounts only is detected (AADSTS9002331) and switched to `consumers` automatically.
+- Set `MSTODO_TOKEN_FILE` to choose where the tokens are written, matching the path in your MCP config. In PowerShell:
+
+```powershell
+$env:MSTODO_TOKEN_FILE = "C:\ABSOLUTE\PATH\TO\microsoft-todo-mcp-server	okens.json"
+pnpm run auth:device YOUR_CLIENT_ID
+```
+
+**Browser redirect (Option B):**
 
 ```bash
 pnpm run auth
 ```
+
+This opens a browser window and uses the `.env` settings.
 
 #### Step 2: Create MCP Configuration
 
@@ -184,7 +227,8 @@ pnpm start            # Run MCP server directly
 pnpm run cli          # Run MCP server via CLI wrapper
 
 # Authentication & Configuration
-pnpm run auth         # Start OAuth authentication server
+pnpm run auth:device <CLIENT_ID> # Sign in with a device code (client ID only)
+pnpm run auth         # Start OAuth authentication server (client secret)
 pnpm run setup        # Run setup helper
 pnpm run create-config # Generate mcp.json from the resolved token source
 
@@ -257,13 +301,14 @@ The server provides 29 tools for Microsoft To Do management.
 
 - **MCP Server** (`src/todo-index.ts`) - Core server implementing the MCP protocol
 - **CLI Wrapper** (`src/cli.ts`) - Executable entry point with token management
-- **Auth Server** (`src/auth-server.ts`) - Express server for OAuth 2.0 flow
+- **Auth Server** (`src/auth-server.ts`) - Express server for the OAuth 2.0 browser redirect flow (Option B)
+- **Device Code Sign-in** (`src/device-auth.ts`) - OAuth 2.0 device code flow, client ID only (Option A)
 - **Config Generator** (`src/create-mcp-config.ts`) - Helper to create MCP configurations
 
 ### Technical Details
 
 - **Microsoft Graph API**: Uses v1.0 endpoints
-- **Authentication**: MSAL (Microsoft Authentication Library) with PKCE flow
+- **Authentication**: OAuth 2.0 device code flow (public client, no secret), or MSAL with the authorization code flow and a client secret
 - **Token Management**: Automatic refresh 5 minutes before expiration
 - **Build System**: tsup targeting Node.js 18 with ESM output
 - **Module System**: ESM (ECMAScript modules)
@@ -281,6 +326,8 @@ The server provides 29 tools for Microsoft To Do management.
 - Rate limits apply according to Microsoft's policies
 - Some features may be unavailable for personal accounts
 - Shared lists have limited functionality
+- `$select` is rejected on task collections (`/me/todo/lists/{id}/tasks`) with HTTP 400 `RequestBroker--ParseUri`, even `$select=title`, at least for personal accounts. `$top`, `$filter` (e.g. `status ne 'completed'`) and `$expand=checklistItems` work, alone or combined
+- Due dates are stored as dates: a `dueDateTime` written through the API keeps only its date (`2026-10-20T04:00:00` UTC comes back as `2026-10-20T00:00:00` UTC). Due dates set in the To Do apps come back as local midnight converted to UTC (e.g. `04:00:00` UTC for New York in summer)
 - Microsoft Graph To Do recurrence updates do not reliably accept documented `PATCH` payloads that include `recurrence.range.startDate`
 - In testing, Microsoft Graph rejected valid-looking payloads in both this MCP server and Graph Explorer with `Invalid JSON, Error converting value "YYYY-MM-DD" to type 'Microsoft.OData.Edm.Date'`
 - `update-task` now uses the Graph-compatible recurrence update shape that worked in testing:
@@ -298,7 +345,13 @@ The server provides 29 tools for Microsoft To Do management.
 
 ### Authentication Issues
 
-**Token acquisition failures**
+**Device code sign-in errors**
+
+- `AADSTS70002 ... must be marked as 'mobile'`: the app registration's **Allow public client flows** setting is off. Turn it on under Authentication > Advanced settings
+- `AADSTS50059` or "not enabled for consumers" with a personal account: the app's supported account types exclude personal accounts. Change them under Authentication (or set `"signInAudience": "AzureADandPersonalMicrosoftAccount"` in the Manifest)
+- `AADSTS9002331`: the app accepts personal accounts only; the sign-in retries against `consumers` automatically
+
+**Token acquisition failures (browser redirect)**
 
 - Verify `CLIENT_ID`, `CLIENT_SECRET`, and `TENANT_ID` in your `.env` file
 - Ensure redirect URI matches exactly: `http://localhost:3000/callback`

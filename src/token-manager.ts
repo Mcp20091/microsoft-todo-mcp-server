@@ -3,6 +3,10 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs"
 import { dirname, join } from "path"
 import { homedir } from "os"
 
+// Scopes requested at sign-in and on refresh.
+export const TOKEN_SCOPES =
+  "offline_access Tasks.Read Tasks.ReadWrite Tasks.Read.Shared Tasks.ReadWrite.Shared User.Read"
+
 interface TokenData {
   accessToken: string
   refreshToken: string
@@ -179,8 +183,10 @@ export class TokenManager {
       const clientSecret = this.currentTokens?.clientSecret || process.env.CLIENT_SECRET
       const tenantId = this.currentTokens?.tenantId || process.env.TENANT_ID || "organizations"
 
-      if (!clientId || !clientSecret) {
-        console.error("Missing client credentials for token refresh")
+      // Device code sign-in (pnpm run auth:device) is a public client: it
+      // refreshes with the client ID alone.
+      if (!clientId) {
+        console.error("Missing client ID for token refresh")
         return null
       }
 
@@ -188,11 +194,11 @@ export class TokenManager {
 
       const formData = new URLSearchParams({
         client_id: clientId,
-        client_secret: clientSecret,
         refresh_token: refreshToken,
         grant_type: "refresh_token",
-        scope: "offline_access Tasks.Read Tasks.ReadWrite Tasks.Read.Shared Tasks.ReadWrite.Shared User.Read",
+        scope: TOKEN_SCOPES,
       })
+      if (clientSecret) formData.set("client_secret", clientSecret)
 
       const response = await fetch(tokenEndpoint, {
         method: "POST",
