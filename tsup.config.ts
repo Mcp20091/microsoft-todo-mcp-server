@@ -8,6 +8,7 @@ export default defineConfig({
     'src/auth-server.ts',
     'src/setup.ts',
     'src/device-auth.ts',
+    'src/http-server.ts',
     'src/token-manager.ts'
   ],
   outDir: 'dist',

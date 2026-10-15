@@ -15,6 +15,7 @@
     "build": "tsup",
     "build:win": "tsup && node -e \"console.log('Build complete')\"",
     "start": "node dist/todo-index.js",
+    "start:http": "node dist/http-server.js",
     "cli": "node dist/cli.js",
     "auth": "node dist/auth-server.js",
     "auth:device": "node dist/device-auth.js",
@@ -61,7 +62,8 @@
     "microsoft-todo-mcp-server": "./dist/cli.js",
     "mstodo": "./dist/cli.js",
     "mstodo-config": "./dist/create-mcp-config.js",
-    "mstodo-setup": "./dist/setup.js"
+    "mstodo-setup": "./dist/setup.js",
+    "mstodo-http": "./dist/http-server.js"
   },
   "files": [
     "dist"

@@ -1,0 +1,17 @@
+services:
+  mstodo-mcp:
+    image: ghcr.io/mcp20091/microsoft-todo-mcp-server:latest
+    # Or build straight from the repo instead of pulling the image:
+    # build: https://github.com/Mcp20091/microsoft-todo-mcp-server.git#feat/http-transport
+    container_name: mstodo-mcp
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      # Clients send this as "Authorization: Bearer <token>". Generate with: openssl rand -hex 32
+      MCP_AUTH_TOKEN: change-me-to-a-long-random-secret
+    volumes:
+      # Holds tokens.json; must be writable by the container user so refreshed tokens persist.
+      - ./data:/data
+    # TrueNAS apps run as uid/gid 568; uncomment if the dataset is owned by "apps".
+    # user: "568:568"

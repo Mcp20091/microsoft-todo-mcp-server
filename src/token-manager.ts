@@ -176,7 +176,20 @@ export class TokenManager {
     return null
   }
 
+  // Concurrent HTTP requests can all find the token expired at once; share one
+  // refresh so they don't race to rotate the same refresh token.
+  private pendingRefresh: Promise<TokenData | null> | null = null
+
   async refreshToken(refreshToken: string): Promise<TokenData | null> {
+    if (!this.pendingRefresh) {
+      this.pendingRefresh = this.doRefreshToken(refreshToken).finally(() => {
+        this.pendingRefresh = null
+      })
+    }
+    return this.pendingRefresh
+  }
+
+  private async doRefreshToken(refreshToken: string): Promise<TokenData | null> {
     try {
       // Get client credentials from stored tokens or environment
       const clientId = this.currentTokens?.clientId || process.env.CLIENT_ID

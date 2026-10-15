@@ -17,11 +17,26 @@ const MS_GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 const USER_AGENT = "microsoft-todo-mcp-server/1.0"
 const LOG_PREVIEW_LIMIT = 4000
 
-// Create server instance
-const server = new McpServer({
-  name: "mstodo",
-  version: "1.0.0",
-})
+// Tools are recorded once and registered on every McpServer instance, so the
+// HTTP transport can build a fresh server for each request.
+const toolRegistrations: unknown[][] = []
+const server = {
+  tool: ((...args: unknown[]) => {
+    toolRegistrations.push(args)
+  }) as unknown as McpServer["tool"],
+}
+
+export function createServer(): McpServer {
+  const instance = new McpServer({
+    name: "mstodo",
+    version: "1.0.0",
+  })
+  const register = instance.tool.bind(instance) as (...args: unknown[]) => unknown
+  for (const args of toolRegistrations) {
+    register(...args)
+  }
+  return instance
+}
 
 type GraphRequestErrorInfo = {
   url: string
@@ -3698,7 +3713,7 @@ export async function startServer(config?: ServerConfig): Promise<void> {
 
     // Start the server
     const transport = new StdioServerTransport()
-    await server.connect(transport)
+    await createServer().connect(transport)
 
     console.error("Server started and listening")
   } catch (error) {

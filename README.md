@@ -136,6 +136,10 @@ Direct `MS_TODO_ACCESS_TOKEN` / `MS_TODO_REFRESH_TOKEN` environment variables ar
 
 ## Usage
 
+### Running on a server (TrueNAS, Proxmox, Docker)
+
+To share one instance across devices over HTTP, see [docs/self-hosting.md](docs/self-hosting.md).
+
 ### Complete Setup Workflow
 
 For this fork, the expected workflow is to run from a local clone:
