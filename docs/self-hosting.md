@@ -28,13 +28,7 @@ No restart is needed; the token file is read on each request.
 
 ## 2a. TrueNAS SCALE (24.10+)
 
-1. Create a dataset, e.g. `tank/apps/mstodo-mcp`, and give the `apps` user (568) write access.
-2. Apps → Discover Apps → ⋮ → **Install via YAML**, name it `mstodo-mcp`, and paste `compose.yaml` with:
-   - `MCP_AUTH_TOKEN` set to the output of `openssl rand -hex 32`
-   - the volume changed to `/mnt/tank/apps/mstodo-mcp:/data`
-   - `user: "568:568"` uncommented
-3. Put `tokens.json` in the dataset, or run the device sign-in above from the TrueNAS shell
-   (`sudo docker exec -it mstodo-mcp ...`).
+See [truenas.md](truenas.md) for install, Microsoft sign-in, Pangolin, changing the secret, and updates.
 
 ## 2b. Proxmox LXC
 

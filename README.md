@@ -138,7 +138,7 @@ Direct `MS_TODO_ACCESS_TOKEN` / `MS_TODO_REFRESH_TOKEN` environment variables ar
 
 ### Running on a server (TrueNAS, Proxmox, Docker)
 
-To share one instance across devices over HTTP, see [docs/self-hosting.md](docs/self-hosting.md).
+To share one instance across devices over HTTP, see [docs/self-hosting.md](docs/self-hosting.md). For a step-by-step TrueNAS SCALE setup, including how to roll out updates, see [docs/truenas.md](docs/truenas.md).
 
 ### Complete Setup Workflow
 
