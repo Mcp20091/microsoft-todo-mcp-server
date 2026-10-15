@@ -281,13 +281,14 @@ The server provides 29 tools for Microsoft To Do management.
 - Rate limits apply according to Microsoft's policies
 - Some features may be unavailable for personal accounts
 - Shared lists have limited functionality
-- Microsoft Graph To Do recurrence updates do not reliably accept documented `PATCH` payloads that include `recurrence.range.startDate`
-- In testing, Microsoft Graph rejected valid-looking payloads in both this MCP server and Graph Explorer with `Invalid JSON, Error converting value "YYYY-MM-DD" to type 'Microsoft.OData.Edm.Date'`
-- `update-task` now uses the Graph-compatible recurrence update shape that worked in testing:
-  - include `dueDateTime`
-  - send the new recurrence `pattern`
-  - send `recurrence.range` as an empty object (`{}`)
-  - clear recurrence with `recurrence: null`
+- Microsoft Graph rejects a recurrence `PATCH` whose `range` is empty (`{}`) with HTTP 400 `Invalid request`. The server always sends a full range: the existing range `type` (default `noEnd`), `startDate` set to the task's due date (`YYYY-MM-DD`), plus `endDate` only for `endDate` ranges and `numberOfOccurrences` only for `numbered` ranges
+- Changing the due date of a recurring task in a single `PATCH` splits it: the original jumps to its next occurrence and a recurring copy appears at the new date. `update-task` (date edits on recurring tasks) and `skip-task-to-current` therefore use three `PATCH`es on the same task id:
+  1. `{"recurrence": null}`
+  2. the new `dueDateTime` (and `reminderDateTime` with `isReminderOn: true`, moved by the same number of days)
+  3. `{"recurrence": {"pattern": ..., "range": {"type": "noEnd", "startDate": "<new due date>"}}}`
+
+  The result is the same task with no copies, and completing it later creates the next occurrence normally. If step 2 or 3 fails, the server tries once to put the original recurrence back before returning the error
+- Changing only the recurrence (no date change) is a single `PATCH` with the current `dueDateTime` and the full range
 - If you update recurrence without specifying `dueDateTime`, the server fetches the current task and reuses the existing due date when it is still on or after the current calendar date; otherwise you must provide a new `dueDateTime`
 - Recurring tasks cannot be created without `dueDateTime`; the MCP server now blocks that request with a descriptive validation error before sending it to Graph
 - Microsoft Graph also normalizes recurring tasks in a few ways:

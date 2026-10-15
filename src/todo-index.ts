@@ -569,17 +569,36 @@ function buildRecurrencePayload(recurrence: RecurrenceInput): PatternedRecurrenc
   }
 }
 
-function buildRecurrencePatchPayload(recurrence: RecurrenceInput): PatternedRecurrence {
+// Graph rejects an empty recurrence range with 400 "Invalid request", so always
+// send a full one anchored on the task's due date.
+function buildRecurrenceRange(range: Partial<RecurrenceRange> | undefined, dueDate: DateTimeTimeZone): RecurrenceRange {
+  const result: RecurrenceRange = {
+    type: range?.type ?? "noEnd",
+    startDate: dueDate.dateTime.slice(0, 10),
+  }
+
+  if (result.type === "endDate" && range?.endDate) {
+    result.endDate = range.endDate
+  } else if (result.type === "numbered" && range?.numberOfOccurrences) {
+    result.numberOfOccurrences = range.numberOfOccurrences
+  } else {
+    result.type = "noEnd"
+  }
+
+  return result
+}
+
+function buildRecurrencePatchPayload(recurrence: RecurrenceInput, dueDate: DateTimeTimeZone): PatternedRecurrence {
   return {
     pattern: buildRecurrencePayload(recurrence).pattern,
-    range: {} as PatternedRecurrence["range"],
+    range: buildRecurrenceRange(recurrence.range, dueDate),
   }
 }
 
-function buildRecurrencePatchPayloadFromExisting(recurrence: PatternedRecurrence): PatternedRecurrence {
+function buildRecurrencePatchPayloadFromExisting(recurrence: PatternedRecurrence, dueDate: DateTimeTimeZone): PatternedRecurrence {
   return {
     pattern: recurrence.pattern,
-    range: {} as PatternedRecurrence["range"],
+    range: buildRecurrenceRange(recurrence.range, dueDate),
   }
 }
 
@@ -820,6 +839,11 @@ function shiftDateTimeByDays(dateTime: string, days: number): string {
   return replaceDatePortion(dateTime, addDays(baseDate, days))
 }
 
+// Changing the due date of a recurring task in one PATCH makes Graph split it
+// (the original jumps to its next occurrence and a copy appears at the new
+// date). Instead: clear the recurrence, move the dates, then put the recurrence
+// back with its range anchored on the new due date. All three PATCHes hit the
+// same task id, so no copies are made.
 async function patchRecurringTaskDateFields(
   token: string,
   listId: string,
@@ -842,43 +866,55 @@ async function patchRecurringTaskDateFields(
     }
   }
 
-  const clearedRecurrence = await makeGraphRequest<Task>(`${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}`, token, "PATCH", {
-    recurrence: null,
-  })
+  const taskUrl = `${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}`
+  const originalRecurrence = existingTask.recurrence
+  const newRecurrence = (taskBody.recurrence as PatternedRecurrence | undefined) ?? originalRecurrence
+
+  // Step 1: clear the recurrence so the date change doesn't split the task.
+  const clearedRecurrence = await makeGraphRequest<Task>(taskUrl, token, "PATCH", { recurrence: null })
 
   if (!clearedRecurrence) {
     return { error: `Failed to temporarily clear recurrence for task ${taskId} before updating date fields.` }
   }
 
-  const bodyWithoutRecurrence = { ...taskBody }
-  delete bodyWithoutRecurrence.recurrence
+  // If a later step fails, try once to put the original repeat back so the
+  // task isn't silently left without one.
+  const failWithRollback = async (message: string): Promise<RecurringDatePatchResult> => {
+    if (!existingTask.dueDateTime) {
+      return { error: `${message} The task's recurrence was cleared and could not be restored (it had no due date).` }
+    }
 
-  let intermediateResponse: Task | null = clearedRecurrence
-  if (Object.keys(bodyWithoutRecurrence).length > 0) {
-    intermediateResponse = await makeGraphRequest<Task>(
-      `${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}`,
-      token,
-      "PATCH",
-      bodyWithoutRecurrence,
-    )
+    const restored = await makeGraphRequest<Task>(taskUrl, token, "PATCH", {
+      recurrence: buildRecurrencePatchPayloadFromExisting(originalRecurrence, existingTask.dueDateTime),
+    })
 
-    if (!intermediateResponse) {
-      return { error: `Failed to update task ${taskId} after clearing recurrence.` }
+    return {
+      error: restored
+        ? `${message} The original recurrence was restored.`
+        : `${message} Restoring the original recurrence also failed, so the task currently has no repeat.`,
     }
   }
 
-  const restoredRecurrence = await makeGraphRequest<Task>(
-    `${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}`,
-    token,
-    "PATCH",
-    {
-      dueDateTime: effectiveDueDate,
-      recurrence: buildRecurrencePatchPayloadFromExisting(existingTask.recurrence),
-    },
-  )
+  // Step 2: move the dates (and any other field changes) with no recurrence attached.
+  const bodyWithoutRecurrence: Record<string, unknown> = { ...taskBody, dueDateTime: effectiveDueDate }
+  delete bodyWithoutRecurrence.recurrence
+  if (bodyWithoutRecurrence.reminderDateTime && bodyWithoutRecurrence.isReminderOn === undefined) {
+    bodyWithoutRecurrence.isReminderOn = true
+  }
+
+  const updatedTask = await makeGraphRequest<Task>(taskUrl, token, "PATCH", bodyWithoutRecurrence)
+
+  if (!updatedTask) {
+    return failWithRollback(`Failed to update task ${taskId} after clearing recurrence.`)
+  }
+
+  // Step 3: restore the recurrence only; step 2 already set the due date.
+  const restoredRecurrence = await makeGraphRequest<Task>(taskUrl, token, "PATCH", {
+    recurrence: buildRecurrencePatchPayloadFromExisting(newRecurrence, effectiveDueDate),
+  })
 
   if (!restoredRecurrence) {
-    return { error: `Failed to restore recurrence for task ${taskId} after updating its date fields.` }
+    return failWithRollback(`Failed to restore recurrence for task ${taskId} after updating its date fields.`)
   }
 
   return { task: restoredRecurrence }
@@ -2190,7 +2226,7 @@ server.tool(
             }
           }
 
-          taskBody.recurrence = buildRecurrencePatchPayload(recurrence)
+          taskBody.recurrence = buildRecurrencePatchPayload(recurrence, taskBody.dueDateTime as DateTimeTimeZone)
         }
       }
 
@@ -2202,8 +2238,11 @@ server.tool(
         taskBody.categories = categories
       }
 
+      // Date edits on a recurring task, including a new recurrence with a new due
+      // date, must go through the clear/move/restore sequence or Graph splits the task.
       const isRecurringTaskDateAdjustment =
-        recurrence === undefined && (taskBody.dueDateTime !== undefined || taskBody.reminderDateTime !== undefined)
+        (recurrence === undefined && (taskBody.dueDateTime !== undefined || taskBody.reminderDateTime !== undefined)) ||
+        (recurrence !== undefined && recurrence !== null && (dueDateTime !== undefined || reminderDateTime !== undefined))
 
       if (isRecurringTaskDateAdjustment) {
         existingTask = existingTask || (await makeGraphRequest<Task>(`${MS_GRAPH_BASE}/me/todo/lists/${listId}/tasks/${taskId}`, token))
