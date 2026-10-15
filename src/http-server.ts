@@ -24,11 +24,17 @@ if (process.env.MSTODO_TOKEN_FILE) {
 }
 console.error(`Token file: ${tokenManager.getTokenFilePath()}`)
 
-const expected = Buffer.from(`Bearer ${authToken}`)
+function matches(given: string | undefined, expected: string): boolean {
+  const a = Buffer.from(given ?? "")
+  const b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
 
+// Accepts the secret as a bearer header, or as the last path segment
+// (/mcp/<secret>) for clients that can't send headers, like claude.ai connectors.
 function requireAuth(req: Request, res: Response, next: NextFunction): void {
-  const given = Buffer.from(req.headers.authorization ?? "")
-  if (given.length === expected.length && timingSafeEqual(given, expected)) {
+  const pathToken = typeof req.params.token === "string" ? req.params.token : undefined
+  if (matches(req.headers.authorization, `Bearer ${authToken}`) || matches(pathToken, authToken)) {
     next()
     return
   }
@@ -49,7 +55,7 @@ app.get("/healthz", (_req, res) => {
   res.json({ ok: true })
 })
 
-app.post("/mcp", requireAuth, async (req, res) => {
+app.post(["/mcp", "/mcp/:token"], requireAuth, async (req, res) => {
   const server = createServer()
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
@@ -76,7 +82,7 @@ app.post("/mcp", requireAuth, async (req, res) => {
 })
 
 // Stateless server: no SSE stream to open and no session to end.
-app.all("/mcp", requireAuth, (_req, res) => {
+app.all(["/mcp", "/mcp/:token"], requireAuth, (_req, res) => {
   res
     .status(405)
     .set("Allow", "POST")

@@ -2,7 +2,8 @@
 
 `dist/http-server.js` serves the MCP server over Streamable HTTP at `http://<host>:8787/mcp`, so several devices
 can share one instance and one set of Microsoft tokens. Every request must carry
-`Authorization: Bearer <MCP_AUTH_TOKEN>`.
+`Authorization: Bearer <MCP_AUTH_TOKEN>`, or use `/mcp/<MCP_AUTH_TOKEN>` as the URL for clients that can't send
+headers.
 
 | Variable            | Default                              | Purpose                                             |
 | ------------------- | ------------------------------------ | --------------------------------------------------- |
@@ -92,7 +93,10 @@ Claude Desktop (`claude_desktop_config.json`), via the `mcp-remote` bridge:
 }
 ```
 
-Claude on the web and mobile adds custom connectors from Anthropic's cloud, so it needs a public HTTPS URL with OAuth;
-a LAN-only bearer-token server like this one is not reachable from there.
+Claude on the web and mobile adds custom connectors from Anthropic's cloud, so the server must be reachable over public
+HTTPS (e.g. a Pangolin or Cloudflare tunnel; exempt the resource from the tunnel's own login). Those connectors can't send
+headers, so add it under Settings → Connectors → Add custom connector with the secret in the URL:
+`https://todo.example.com/mcp/<MCP_AUTH_TOKEN>`. The secret may then show up in proxy access logs, so keep it long
+and rotate it if it leaks.
 
 Health check: `curl http://nas.lan:8787/healthz`.
